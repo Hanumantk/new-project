@@ -19,6 +19,44 @@ async function requestSession(xr: XRSystem, mode: XRSessionMode): Promise<XRSess
   }
 }
 
+/** How to open the mixed-reality version in Quest Browser, by hand or over USB. */
+function QuestBrowserSteps() {
+  const url = window.location.href.split('#')[0];
+  const shortUrl = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const adb = `adb shell am start -a android.intent.action.VIEW -d "${url}" com.oculus.browser`;
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(adb).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  return (
+    <>
+      <ol className="xr-steps">
+        <li>
+          In the headset, open <strong>Browser</strong> and go to <strong>{shortUrl}</strong>
+        </li>
+        <li>
+          Tap <strong>Start mixed reality</strong>, then <strong>Enter mixed reality</strong>.
+        </li>
+        <li>Put the controllers down and hold up your open palm.</li>
+      </ol>
+      <details className="xr-details">
+        <summary>Open it from this laptop over the USB cable</summary>
+        <p>
+          With developer mode on and the headset connected by USB, run this on the laptop (needs{' '}
+          <strong>adb</strong>, e.g. from Meta Quest Developer Hub) to open the page in the headset:
+        </p>
+        <code className="xr-code">{adb}</code>
+        <button type="button" className="panel button" onClick={copy}>
+          {copied ? 'Copied' : 'Copy command'}
+        </button>
+      </details>
+    </>
+  );
+}
+
 function describeError(err: unknown): string {
   if (err instanceof Error || err instanceof DOMException) {
     return err.message ? `${err.name}: ${err.message}` : err.name;
@@ -135,6 +173,18 @@ export function XRView({ onExit }: XRViewProps) {
           </>
         ) : support === null ? (
           <p>Checking for a headset…</p>
+        ) : supported && !support.ar ? (
+          <>
+            <p>
+              <strong>Mixed reality isn’t available over Quest Link</strong> — PC browsers can only show
+              VR through the cable, not your real room. The AR version runs in the Quest’s own browser:
+            </p>
+            <QuestBrowserSteps />
+            <p className="xr-note">Or try it in VR here, with virtual hands in a simple room:</p>
+            <button type="button" className="panel button" onClick={() => enter('vr')}>
+              Enter VR
+            </button>
+          </>
         ) : supported ? (
           <>
             <p>
@@ -157,26 +207,14 @@ export function XRView({ onExit }: XRViewProps) {
                 </button>
               )}
             </div>
-            {!support.ar && (
-              <p className="xr-note">
-                Over Quest Link you’ll see virtual hands in a VR room. For passthrough (your real
-                hands), open this page in the Quest’s own browser.
-              </p>
-            )}
           </>
         ) : (
           <>
-            <p>No headset found. To use a Meta Quest 3 over a USB cable:</p>
-            <ol className="xr-steps">
-              <li>Install the Meta Quest Link app on this Windows laptop and connect the headset with the USB cable.</li>
-              <li>In the Link app, open Settings → General and make Meta Quest Link the active OpenXR runtime.</li>
-              <li>In the headset, turn on hand tracking and start Quest Link.</li>
-              <li>Open this page in Chrome or Edge on the laptop and reload it.</li>
-            </ol>
-            <p className="xr-note">
-              Or skip the cable: open <strong>{window.location.href}</strong> in the Quest’s own browser for
-              mixed reality with your real hands.
+            <p>
+              No headset found here. For mixed reality — your real room, with the wound on your real
+              palm — open this page in the Quest’s own browser:
             </p>
+            <QuestBrowserSteps />
           </>
         )}
 

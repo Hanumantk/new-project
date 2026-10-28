@@ -403,3 +403,44 @@ button {
   border-radius: 10px;
   padding: 12px 14px;
 }
+
+.xr-details {
+  width: 100%;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.xr-details summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.xr-details[open] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.xr-details[open] summary {
+  margin-bottom: 2px;
+}
+
+.xr-details p {
+  font-size: 13px;
+}
+
+.xr-code {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #eceeec;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+  user-select: all;
+}
