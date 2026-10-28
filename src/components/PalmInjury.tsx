@@ -1,16 +1,28 @@
-import { useEffect, useMemo, useRef, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { computeCover, createCoverRect, type CoverRect } from '../lib/coverMapping';
 import { HandOccluder } from '../lib/handOccluder';
+import {
+  INJURY_HEIGHT_MAX,
+  INJURY_HEIGHT_MIN,
+  INJURY_PATCH_SIZE,
+  loadInjuryTextures,
+  type InjuryTextures,
+} from '../lib/injury/injuryTextures';
 import { LM, PALM_INDICES, type TrackingState } from '../lib/tracking';
 
-/** Cube edge length in metres. */
-const CUBE_SIZE = 0.06;
-/** Gap between the palm and the underside of the cube, in metres. */
-const HOVER_GAP = 0.008;
+/** Size of the wound relative to the designed patch (a 7 cm square of palm). */
+const INJURY_SIZE = 1.3;
+/** The landmark palm centre sits near the knuckles; move the wound towards the wrist. */
+const INJURY_OFFSET_TOWARDS_WRIST = 0.022;
+/** Heights above the palm plane, in metres, for the skin tint and the wound's base. */
+const TINT_LIFT = 0.0008;
+const WOUND_LIFT = 0.0014;
+/** Vertex grid of the displaced wound mesh. */
+const WOUND_SEGMENTS = 192;
 /** Typical adult wrist → middle-finger knuckle distance, in metres. */
 const REAL_PALM_LENGTH = 0.09;
 /** Depth of the plane, in front of the camera, on which the hand is placed. */
@@ -22,9 +34,6 @@ const FADE_SECONDS = 0.2;
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
 
-const CUBE_COLOR = '#8EDDB0';
-const SHADOW_OPACITY = 0.38;
-
 /** Everything needed to turn a landmark into a world-space point. */
 interface Projection {
   cover: CoverRect;
@@ -34,55 +43,97 @@ interface Projection {
   worldPerPx: number;
 }
 
-interface PalmCubeProps {
+interface PalmInjuryProps {
   tracking: RefObject<TrackingState>;
 }
 
-export function PalmCube({ tracking }: PalmCubeProps) {
+export function PalmInjury({ tracking }: PalmInjuryProps) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
+  const gl = useThree((s) => s.gl);
 
   const groupRef = useRef<THREE.Group>(null);
+  const [textures, setTextures] = useState<InjuryTextures | null>(null);
 
-  const geometry = useMemo(
-    () => new RoundedBoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE, 4, CUBE_SIZE * 0.14),
+  const tintGeometry = useMemo(
+    () => new THREE.PlaneGeometry(INJURY_PATCH_SIZE, INJURY_PATCH_SIZE),
     [],
   );
-  const cubeMaterial = useMemo(
+  const woundGeometry = useMemo(
+    () =>
+      new THREE.PlaneGeometry(INJURY_PATCH_SIZE, INJURY_PATCH_SIZE, WOUND_SEGMENTS, WOUND_SEGMENTS),
+    [],
+  );
+  // Bruising and redness are unlit so they read as a change in skin colour.
+  const tintMaterial = useMemo(
+    () => new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false }),
+    [],
+  );
+  // The wound is lit: displaced, normal-mapped, and glossy where it's wet.
+  const woundMaterial = useMemo(
     () =>
       new THREE.MeshPhysicalMaterial({
-        color: CUBE_COLOR,
-        roughness: 0.32,
-        metalness: 0,
-        clearcoat: 0.8,
-        clearcoatRoughness: 0.18,
-        transparent: true,
-      }),
-    [],
-  );
-  const shadowTexture = useMemo(() => createShadowTexture(), []);
-  const shadowMaterial = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        map: shadowTexture,
         transparent: true,
         depthWrite: false,
-        side: THREE.DoubleSide,
-        opacity: SHADOW_OPACITY,
+        roughness: 1, // scaled per pixel by the roughness map
+        metalness: 0,
+        clearcoat: 0.25,
+        clearcoatRoughness: 0.12,
+        displacementScale: INJURY_HEIGHT_MAX - INJURY_HEIGHT_MIN,
+        displacementBias: INJURY_HEIGHT_MIN,
+        envMapIntensity: 0.3,
+        // Keep the authored wound colours; tone mapping washes reds out to pink.
+        toneMapped: false,
       }),
-    [shadowTexture],
+    [],
   );
   const occluder = useMemo(() => new HandOccluder(), []);
 
+  // Soft studio reflections for the wet surfaces.
+  useEffect(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const room = new RoomEnvironment();
+    const envMap = pmrem.fromScene(room, 0.04).texture;
+    woundMaterial.envMap = envMap;
+    woundMaterial.needsUpdate = true;
+    room.dispose();
+    pmrem.dispose();
+    return () => envMap.dispose();
+  }, [gl, woundMaterial]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loaded: InjuryTextures | null = null;
+    loadInjuryTextures().then((t) => {
+      if (cancelled) {
+        t.dispose();
+        return;
+      }
+      loaded = t;
+      tintMaterial.map = t.tint;
+      woundMaterial.map = t.wound;
+      woundMaterial.normalMap = t.normal;
+      woundMaterial.roughnessMap = t.surface;
+      woundMaterial.displacementMap = t.surface;
+      tintMaterial.needsUpdate = true;
+      woundMaterial.needsUpdate = true;
+      setTextures(t);
+    });
+    return () => {
+      cancelled = true;
+      loaded?.dispose();
+    };
+  }, [tintMaterial, woundMaterial]);
+
   useEffect(
     () => () => {
-      geometry.dispose();
-      cubeMaterial.dispose();
-      shadowMaterial.dispose();
-      shadowTexture.dispose();
+      tintGeometry.dispose();
+      woundGeometry.dispose();
+      tintMaterial.dispose();
+      woundMaterial.dispose();
       occluder.dispose();
     },
-    [geometry, cubeMaterial, shadowMaterial, shadowTexture, occluder],
+    [tintGeometry, woundGeometry, tintMaterial, woundMaterial, occluder],
   );
 
   // Everything below is allocated once and reused every frame.
@@ -122,7 +173,7 @@ export function PalmCube({ tracking }: PalmCubeProps) {
     const cover = computeCover(p.cover, p.viewW, p.viewH, video.videoWidth, video.videoHeight);
 
     // Give the virtual camera the webcam's optics as seen through the cover
-    // crop, so the cube's perspective matches the real image.
+    // crop, so the wound's perspective matches the real image.
     const halfFov = Math.atan(
       Math.tan(THREE.MathUtils.degToRad(WEBCAM_VFOV_DEG) / 2) * (p.viewH / cover.height),
     );
@@ -135,16 +186,16 @@ export function PalmCube({ tracking }: PalmCubeProps) {
     p.worldPerPx = (2 * PLANE_DEPTH * Math.tan(halfFov)) / p.viewH;
 
     const landmarks = state.landmarks;
-    // A closed hand has no palm to rest on, so the cube only shows while it's open.
-    const hasHand = landmarks !== null && state.handOpen;
+    // A closed hand covers the palm, so the wound only shows while it's open.
+    const visible = landmarks !== null && state.handOpen && textures !== null;
 
     if (landmarks && state.frameId !== s.lastFrameId) {
       s.lastFrameId = state.frameId;
       updateTargets(landmarks, state.isRightHand, p);
     }
 
-    // Snap rather than glide when the cube is (re)appearing from invisible.
-    if (hasHand && s.hasTarget && s.opacity === 0) {
+    // Snap rather than glide when (re)appearing from invisible.
+    if (visible && s.hasTarget && s.opacity === 0) {
       group.position.copy(s.targetPosition);
       group.quaternion.copy(s.targetQuaternion);
       group.scale.setScalar(s.targetScale);
@@ -157,13 +208,13 @@ export function PalmCube({ tracking }: PalmCubeProps) {
     }
 
     const fadeStep = delta / FADE_SECONDS;
-    s.opacity = THREE.MathUtils.clamp(s.opacity + (hasHand ? fadeStep : -fadeStep), 0, 1);
-    cubeMaterial.opacity = s.opacity;
-    shadowMaterial.opacity = SHADOW_OPACITY * s.opacity;
+    s.opacity = THREE.MathUtils.clamp(s.opacity + (visible ? fadeStep : -fadeStep), 0, 1);
+    tintMaterial.opacity = s.opacity;
+    woundMaterial.opacity = s.opacity;
     group.visible = s.opacity > 0;
 
-    // Keep the invisible hand in step with the (smoothed) cube so the real
-    // hand hides whatever part of the cube is behind it.
+    // Keep the invisible hand in step with the (smoothed) wound so the real
+    // hand hides it whenever the palm is turned away.
     occluder.root.visible = group.visible;
     if (group.visible) {
       s.normal.set(0, 1, 0).applyQuaternion(group.quaternion);
@@ -209,18 +260,27 @@ export function PalmCube({ tracking }: PalmCubeProps) {
     s.hasTarget = true;
   }
 
+  // The planes lie flat on the palm (local XZ), texture "down" towards the wrist.
   return (
     <>
       <primitive object={occluder.root} />
       <group ref={groupRef} visible={false}>
         <mesh
-          geometry={geometry}
-          material={cubeMaterial}
-          position={[0, CUBE_SIZE / 2 + HOVER_GAP, 0]}
+          geometry={tintGeometry}
+          material={tintMaterial}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, TINT_LIFT, -INJURY_OFFSET_TOWARDS_WRIST]}
+          scale={INJURY_SIZE}
+          renderOrder={1}
         />
-        <mesh material={shadowMaterial} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
-          <planeGeometry args={[CUBE_SIZE * 1.7, CUBE_SIZE * 1.7]} />
-        </mesh>
+        <mesh
+          geometry={woundGeometry}
+          material={woundMaterial}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, WOUND_LIFT, -INJURY_OFFSET_TOWARDS_WRIST]}
+          scale={[INJURY_SIZE, INJURY_SIZE, 1]}
+          renderOrder={2}
+        />
       </group>
     </>
   );
@@ -239,20 +299,4 @@ function landmarkToWorld(out: THREE.Vector3, lm: NormalizedLandmark, p: Projecti
   const depth = Math.max(PLANE_DEPTH + lm.z * videoW * cover.scale * worldPerPx, PLANE_DEPTH * 0.2);
   const k = (worldPerPx / PLANE_DEPTH) * depth;
   return out.set((px - viewW / 2) * k, -(py - viewH / 2) * k, -depth);
-}
-
-function createShadowTexture(): THREE.CanvasTexture {
-  const res = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = res;
-  const ctx = canvas.getContext('2d')!;
-  const gradient = ctx.createRadialGradient(res / 2, res / 2, 0, res / 2, res / 2, res / 2);
-  gradient.addColorStop(0, 'rgba(18, 48, 32, 0.9)');
-  gradient.addColorStop(0.45, 'rgba(18, 48, 32, 0.45)');
-  gradient.addColorStop(1, 'rgba(18, 48, 32, 0)');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, res, res);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
 }

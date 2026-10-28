@@ -23,11 +23,11 @@ const PALM_OUTLINE = [LM.WRIST, 1, LM.INDEX_MCP, LM.MIDDLE_MCP, LM.RING_MCP, LM.
 
 /**
  * An invisible stand-in for the user's hand. It writes depth but no colour,
- * so anything behind the real hand (like the cube when the back of the hand
+ * so anything behind the real hand (like the wound when the back of the hand
  * faces the camera) is hidden, while the video stays visible.
  *
  * Fingers are capsules (cylinders + joint spheres); the palm is a flat fan
- * laid just behind the cube's palm plane, so it never clips the cube from the
+ * laid just behind the palm plane, so it never clips what sits on the palm from the
  * palm side. All meshes and scratch objects are created once and reused.
  */
 export class HandOccluder {
@@ -76,7 +76,7 @@ export class HandOccluder {
   /**
    * @param joints  The 21 hand landmarks in world space.
    * @param normal  Unit palm normal (out of the palm), in world space.
-   * @param origin  A point on the palm plane (the cube's base).
+   * @param origin  A point on the palm plane (where the wound sits).
    * @param handScale  Scale applied to real-world hand dimensions.
    */
   update(joints: THREE.Vector3[], normal: THREE.Vector3, origin: THREE.Vector3, handScale: number) {

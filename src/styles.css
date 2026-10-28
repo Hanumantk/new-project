@@ -129,14 +129,30 @@ button {
   padding: 12px 14px;
 }
 
-.intro-cube {
+.intro-icon {
+  position: relative;
   width: 44px;
   height: 44px;
-  border-radius: 11px;
-  background: linear-gradient(145deg, #b4ecca, var(--mint) 55%, #6fc796);
-  box-shadow: 0 10px 20px rgba(47, 158, 99, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  transform: rotate(-12deg);
+  border-radius: 12px;
+  background: linear-gradient(150deg, #f1c9b2, #dba78c);
+  box-shadow: 0 10px 20px rgba(150, 70, 50, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.5);
   margin-bottom: 4px;
+  overflow: hidden;
+}
+
+/* A small red gash across the icon. */
+.intro-icon::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: linear-gradient(#5a0509, #a3121b);
+  box-shadow: 0 0 0 2px rgba(196, 60, 60, 0.35);
+  transform: rotate(-28deg);
 }
 
 /* ---------- AR view ---------- */

@@ -1,6 +1,6 @@
 import type { Delegate } from '../lib/handLandmarker';
 
-/** No hand / a closed hand (no cube) / an open hand (cube on the palm). */
+/** No hand / a closed hand (wound hidden) / an open hand (wound on the palm). */
 export type HandStatus = 'none' | 'closed' | 'open';
 
 const STATUS_LABEL: Record<HandStatus, string> = {

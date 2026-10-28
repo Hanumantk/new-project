@@ -10,7 +10,7 @@ export interface TrackingState {
   landmarks: NormalizedLandmark[] | null;
   /** The user's actual hand (not MediaPipe's mirrored label). */
   isRightHand: boolean;
-  /** True while the hand is open (a closed hand has no palm for the cube). */
+  /** True while the hand is open (a closed hand covers the palm). */
   handOpen: boolean;
   /** Increments every time a new video frame has been processed. */
   frameId: number;
