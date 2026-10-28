@@ -1,7 +1,9 @@
-import { memo, type RefObject } from 'react';
+import { memo, useRef, type RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
+import { createHandPose, type HandPose } from '../lib/handPose';
 import type { TrackingState } from '../lib/tracking';
 import { PalmInjury } from './PalmInjury';
+import { WebcamPoseSource } from './WebcamPoseSource';
 
 interface ARSceneProps {
   tracking: RefObject<TrackingState>;
@@ -12,6 +14,7 @@ interface ARSceneProps {
  * FPS / status updates never re-render the scene.
  */
 export const ARScene = memo(function ARScene({ tracking }: ARSceneProps) {
+  const pose = useRef<HandPose>(createHandPose());
   return (
     <Canvas
       gl={{ alpha: true, antialias: true }}
@@ -21,7 +24,8 @@ export const ARScene = memo(function ARScene({ tracking }: ARSceneProps) {
     >
       <ambientLight intensity={0.55} />
       <directionalLight position={[0.6, 1, 0.8]} intensity={0.9} />
-      <PalmInjury tracking={tracking} />
+      <WebcamPoseSource tracking={tracking} pose={pose} />
+      <PalmInjury pose={pose} />
     </Canvas>
   );
 });

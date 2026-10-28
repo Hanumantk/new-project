@@ -23,6 +23,26 @@ access.
 Other scripts: `npm run build` (typecheck + production build into `dist/`),
 `npm run preview`, `npm run typecheck`.
 
+## Meta Quest 3 (VR / mixed reality)
+
+Click **Use a VR headset**. This mode uses the headset's own hand tracking
+(WebXR Hand Input) instead of the webcam, and places the wound on your palm
+in true 3D.
+
+- **Quest 3 over a USB cable (Quest Link):** install the Meta Quest Link app
+  on Windows, make it the active OpenXR runtime (Link app → Settings →
+  General), turn on hand tracking in the headset, start Quest Link, then open
+  the page in Chrome or Edge on the laptop and click **Enter VR**. Over Link
+  browsers only offer VR, so you'll see skin-toned virtual hands in a simple
+  room, with the wound on your palm.
+- **Quest's own browser (no cable):** open the site there and click
+  **Enter mixed reality** to see the wound on your real hand through
+  passthrough.
+
+Put the controllers down so the headset switches to hand tracking. The wound
+goes on your right hand when it's tracked, otherwise the left; a floating
+hint appears while no open hand is seen.
+
 ## How it works
 
 | Piece | File |
@@ -33,6 +53,9 @@ Other scripts: `npm run build` (typecheck + production build into `dist/`),
 | Wound placement, rotation, scale, smoothing, fade, materials | `src/components/PalmInjury.tsx` |
 | Procedural wound maps (colour, normals, height, roughness), built in a Web Worker | `src/lib/injury/` |
 | Invisible hand that hides the wound behind it | `src/lib/handOccluder.ts` |
+| Webcam landmarks → 3D hand pose, camera optics | `src/components/WebcamPoseSource.tsx` |
+| Headset mode: session, VR room, hint panel | `src/components/XRView.tsx`, `src/components/XRScene.tsx` |
+| Headset hand joints → the same 3D hand pose | `src/components/XRPoseSource.tsx` |
 | HandLandmarker setup (VIDEO mode, 1 hand, GPU → CPU fallback) | `src/lib/handLandmarker.ts` |
 | `object-fit: cover` maths shared by 2D and 3D overlays | `src/lib/coverMapping.ts` |
 
