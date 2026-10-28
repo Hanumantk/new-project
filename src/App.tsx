@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { ARView } from './components/ARView';
+import { XRView } from './components/XRView';
 
-type Screen = { kind: 'start' } | { kind: 'ar' } | { kind: 'error'; message: string };
+type Screen = { kind: 'start' } | { kind: 'ar' } | { kind: 'xr' } | { kind: 'error'; message: string };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: 'start' });
@@ -13,6 +14,10 @@ export default function App() {
         onStop={() => setScreen({ kind: 'start' })}
       />
     );
+  }
+
+  if (screen.kind === 'xr') {
+    return <XRView onExit={() => setScreen({ kind: 'start' })} />;
   }
 
   return (
@@ -32,6 +37,9 @@ export default function App() {
         )}
         <button type="button" className="button button--primary" onClick={() => setScreen({ kind: 'ar' })}>
           {screen.kind === 'error' ? 'Try again' : 'Start camera'}
+        </button>
+        <button type="button" className="panel button" onClick={() => setScreen({ kind: 'xr' })}>
+          Use a VR headset
         </button>
       </div>
     </main>

@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
-import { computeCover, createCoverRect, type CoverRect } from '../lib/coverMapping';
 import { HandOccluder } from '../lib/handOccluder';
+import type { HandPose } from '../lib/handPose';
 import {
   INJURY_HEIGHT_MAX,
   INJURY_HEIGHT_MIN,
@@ -12,7 +11,7 @@ import {
   loadInjuryTextures,
   type InjuryTextures,
 } from '../lib/injury/injuryTextures';
-import { LM, PALM_INDICES, type TrackingState } from '../lib/tracking';
+import { LM, PALM_INDICES } from '../lib/tracking';
 
 /** Size of the wound relative to the designed patch (a 7 cm square of palm). */
 const INJURY_SIZE = 1.3;
@@ -25,31 +24,23 @@ const WOUND_LIFT = 0.0014;
 const WOUND_SEGMENTS = 192;
 /** Typical adult wrist → middle-finger knuckle distance, in metres. */
 const REAL_PALM_LENGTH = 0.09;
-/** Depth of the plane, in front of the camera, on which the hand is placed. */
-const PLANE_DEPTH = 0.5;
-/** Vertical field of view of a typical 16:9 laptop webcam (~65° horizontal). */
-const WEBCAM_VFOV_DEG = 41;
 const SMOOTHING = 0.35;
 const FADE_SECONDS = 0.2;
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
 
-/** Everything needed to turn a landmark into a world-space point. */
-interface Projection {
-  cover: CoverRect;
-  viewW: number;
-  viewH: number;
-  videoW: number;
-  worldPerPx: number;
-}
-
 interface PalmInjuryProps {
-  tracking: RefObject<TrackingState>;
+  /** The tracked hand, filled each frame by a pose source (webcam or headset). */
+  pose: RefObject<HandPose>;
+  /**
+   * Hide the wound behind an invisible stand-in for the real hand. Needed when
+   * the real hand is seen (webcam video, passthrough); off when a visible
+   * virtual hand is drawn, which hides the wound by itself.
+   */
+  occlude?: boolean;
 }
 
-export function PalmInjury({ tracking }: PalmInjuryProps) {
-  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
-  const size = useThree((s) => s.size);
+export function PalmInjury({ pose, occlude = true }: PalmInjuryProps) {
   const gl = useThree((s) => s.gl);
 
   const groupRef = useRef<THREE.Group>(null);
@@ -139,14 +130,13 @@ export function PalmInjury({ tracking }: PalmInjuryProps) {
   // Everything below is allocated once and reused every frame.
   const scratch = useMemo(
     () => ({
-      projection: { cover: createCoverRect(), viewW: 0, viewH: 0, videoW: 0, worldPerPx: 0 },
       targetJoints: Array.from({ length: 21 }, () => new THREE.Vector3()),
       joints: Array.from({ length: 21 }, () => new THREE.Vector3()),
       targetPosition: new THREE.Vector3(),
       targetQuaternion: new THREE.Quaternion(),
       targetScale: 1,
       hasTarget: false,
-      lastFrameId: -1,
+      lastVersion: -1,
       opacity: 0,
       fingers: new THREE.Vector3(),
       across: new THREE.Vector3(),
@@ -161,37 +151,16 @@ export function PalmInjury({ tracking }: PalmInjuryProps) {
 
   useFrame((_, delta) => {
     const group = groupRef.current;
-    const state = tracking.current;
-    const video = state?.video;
-    if (!group || !state || !video || !video.videoWidth) return;
-
+    const hand = pose.current;
+    if (!group || !hand) return;
     const s = scratch;
-    const p = s.projection;
-    p.viewW = size.width;
-    p.viewH = size.height;
-    p.videoW = video.videoWidth;
-    const cover = computeCover(p.cover, p.viewW, p.viewH, video.videoWidth, video.videoHeight);
 
-    // Give the virtual camera the webcam's optics as seen through the cover
-    // crop, so the wound's perspective matches the real image.
-    const halfFov = Math.atan(
-      Math.tan(THREE.MathUtils.degToRad(WEBCAM_VFOV_DEG) / 2) * (p.viewH / cover.height),
-    );
-    const fovDeg = THREE.MathUtils.radToDeg(halfFov * 2);
-    if (Math.abs(camera.fov - fovDeg) > 0.01) {
-      camera.fov = fovDeg;
-      camera.updateProjectionMatrix();
-    }
-    // World units per view pixel on the tracking plane.
-    p.worldPerPx = (2 * PLANE_DEPTH * Math.tan(halfFov)) / p.viewH;
-
-    const landmarks = state.landmarks;
     // A closed hand covers the palm, so the wound only shows while it's open.
-    const visible = landmarks !== null && state.handOpen && textures !== null;
+    const visible = hand.tracked && hand.open && textures !== null;
 
-    if (landmarks && state.frameId !== s.lastFrameId) {
-      s.lastFrameId = state.frameId;
-      updateTargets(landmarks, state.isRightHand, p);
+    if (hand.tracked && hand.version !== s.lastVersion) {
+      s.lastVersion = hand.version;
+      updateTargets(hand);
     }
 
     // Snap rather than glide when (re)appearing from invisible.
@@ -215,18 +184,16 @@ export function PalmInjury({ tracking }: PalmInjuryProps) {
 
     // Keep the invisible hand in step with the (smoothed) wound so the real
     // hand hides it whenever the palm is turned away.
-    occluder.root.visible = group.visible;
-    if (group.visible) {
+    occluder.root.visible = occlude && group.visible;
+    if (occluder.root.visible) {
       s.normal.set(0, 1, 0).applyQuaternion(group.quaternion);
       occluder.update(s.joints, s.normal, group.position, group.scale.x);
     }
   });
 
-  function updateTargets(landmarks: NormalizedLandmark[], isRightHand: boolean, p: Projection) {
+  function updateTargets(hand: HandPose) {
     const s = scratch;
-
-    // All 21 landmarks as 3D points in front of the camera.
-    for (let i = 0; i < landmarks.length; i++) landmarkToWorld(s.targetJoints[i], landmarks[i], p);
+    s.targetJoints.forEach((joint, i) => joint.copy(hand.joints[i]));
 
     // Palm centre: average of the wrist and the four knuckles.
     s.targetPosition.set(0, 0, 0);
@@ -247,12 +214,14 @@ export function PalmInjury({ tracking }: PalmInjuryProps) {
     // fingers × across points out of the palm for a right hand and out of the
     // back of a left hand, so flip it for left hands.
     s.yAxis.crossVectors(s.fingers, s.across);
-    if (!isRightHand) s.yAxis.negate();
+    if (!hand.isRightHand) s.yAxis.negate();
     if (s.yAxis.lengthSq() < 1e-12) {
       s.hasTarget = true;
       return; // Degenerate (hand edge-on): keep the previous orientation.
     }
     s.yAxis.normalize();
+    // Sit on the skin rather than on the plane through the joints.
+    s.targetPosition.addScaledVector(s.yAxis, hand.surfaceOffset);
     s.zAxis.copy(s.fingers).addScaledVector(s.yAxis, -s.fingers.dot(s.yAxis)).normalize();
     s.xAxis.crossVectors(s.yAxis, s.zAxis);
     s.basis.makeBasis(s.xAxis, s.yAxis, s.zAxis);
@@ -284,19 +253,4 @@ export function PalmInjury({ tracking }: PalmInjuryProps) {
       </group>
     </>
   );
-}
-
-/**
- * MediaPipe landmark → world point. x/y go through the cover crop to a view
- * pixel, whose camera ray we follow to the landmark's depth: the tracking
- * plane, shifted by MediaPipe's relative z (same scale as x, smaller = closer).
- * Following the ray keeps every point exactly over the hand on screen.
- */
-function landmarkToWorld(out: THREE.Vector3, lm: NormalizedLandmark, p: Projection) {
-  const { cover, viewW, viewH, videoW, worldPerPx } = p;
-  const px = cover.offsetX + lm.x * cover.width;
-  const py = cover.offsetY + lm.y * cover.height;
-  const depth = Math.max(PLANE_DEPTH + lm.z * videoW * cover.scale * worldPerPx, PLANE_DEPTH * 0.2);
-  const k = (worldPerPx / PLANE_DEPTH) * depth;
-  return out.set((px - viewW / 2) * k, -(py - viewH / 2) * k, -depth);
 }

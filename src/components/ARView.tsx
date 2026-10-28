@@ -3,16 +3,13 @@ import type { HandLandmarker } from '@mediapipe/tasks-vision';
 import { createHandLandmarker, type Delegate } from '../lib/handLandmarker';
 import { computeCover, createCoverRect } from '../lib/coverMapping';
 import { drawLandmarks } from '../lib/drawLandmarks';
+import { CLOSED_HAND_SCORE, OPEN_HAND_SCORE } from '../lib/handPose';
 import { createTrackingState, handOpenness, type TrackingState } from '../lib/tracking';
 import { ARScene } from './ARScene';
 import { Hud, type HandStatus } from './Hud';
 
 /** Frames a new handedness label must persist before we believe it. */
 const HANDEDNESS_HYSTERESIS = 5;
-/** Openness (see handOpenness) above which a closed hand counts as open… */
-const OPEN_HAND_SCORE = 1.3;
-/** …and below which an open hand counts as closed (the gap prevents flicker). */
-const CLOSED_HAND_SCORE = 1.15;
 const FPS_UPDATE_MS = 500;
 
 const UNSUPPORTED_MESSAGE =
