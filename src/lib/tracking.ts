@@ -10,14 +10,14 @@ export interface TrackingState {
   landmarks: NormalizedLandmark[] | null;
   /** The user's actual hand (not MediaPipe's mirrored label). */
   isRightHand: boolean;
-  /** True while the palm side (not the back of the hand) faces the camera. */
-  palmVisible: boolean;
+  /** True while the hand is open (a closed hand covers the palm). */
+  handOpen: boolean;
   /** Increments every time a new video frame has been processed. */
   frameId: number;
 }
 
 export function createTrackingState(): TrackingState {
-  return { video: null, landmarks: null, isRightHand: true, palmVisible: false, frameId: 0 };
+  return { video: null, landmarks: null, isRightHand: true, handOpen: false, frameId: 0 };
 }
 
 /** Indices of the landmarks we use. */
@@ -31,31 +31,35 @@ export const LM = {
 
 export const PALM_INDICES = [LM.WRIST, LM.INDEX_MCP, LM.MIDDLE_MCP, LM.RING_MCP, LM.PINKY_MCP];
 
+const FINGERS = [
+  { mcp: 5, tip: 8 },
+  { mcp: 9, tip: 12 },
+  { mcp: 13, tip: 16 },
+  { mcp: 17, tip: 20 },
+] as const;
+
 /**
- * How squarely the palm (rather than the back of the hand) faces the camera:
- * +1 palm straight at the camera, 0 edge-on, -1 back of the hand.
- *
- * It is the screen-facing component of the palm normal, built from the
- * wrist→middle-knuckle and index→pinky-knuckle directions. Only x/y are used,
- * since MediaPipe's z estimate is too noisy to decide which side faces us.
+ * How open the hand is: the mean, over the four fingers, of
+ * |wrist→fingertip| / |wrist→knuckle|. Around 1.8–2 for a flat open hand,
+ * close to 1 for a fist. Uses MediaPipe's z too, so turning the hand
+ * sideways doesn't read as closing it.
  */
-export function palmFacingScore(
+export function handOpenness(
   landmarks: NormalizedLandmark[],
-  isRightHand: boolean,
   videoWidth: number,
   videoHeight: number,
 ): number {
   const wrist = landmarks[LM.WRIST];
-  const middle = landmarks[LM.MIDDLE_MCP];
-  const index = landmarks[LM.INDEX_MCP];
-  const pinky = landmarks[LM.PINKY_MCP];
-  // Image y points down; flip it so the cross product follows three.js axes.
-  const fx = (middle.x - wrist.x) * videoWidth;
-  const fy = -(middle.y - wrist.y) * videoHeight;
-  const ax = (pinky.x - index.x) * videoWidth;
-  const ay = -(pinky.y - index.y) * videoHeight;
-  const lengths = Math.hypot(fx, fy) * Math.hypot(ax, ay);
-  if (lengths === 0) return 0;
-  const cross = (fx * ay - fy * ax) / lengths;
-  return isRightHand ? cross : -cross;
+  const dist = (i: number) =>
+    Math.hypot(
+      (landmarks[i].x - wrist.x) * videoWidth,
+      (landmarks[i].y - wrist.y) * videoHeight,
+      (landmarks[i].z - wrist.z) * videoWidth,
+    );
+  let sum = 0;
+  for (const { mcp, tip } of FINGERS) {
+    const knuckle = dist(mcp);
+    sum += knuckle > 0 ? dist(tip) / knuckle : 0;
+  }
+  return sum / FINGERS.length;
 }

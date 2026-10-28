@@ -1,7 +1,7 @@
 import { memo, type RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
 import type { TrackingState } from '../lib/tracking';
-import { PalmCube } from './PalmCube';
+import { PalmInjury } from './PalmInjury';
 
 interface ARSceneProps {
   tracking: RefObject<TrackingState>;
@@ -19,9 +19,9 @@ export const ARScene = memo(function ARScene({ tracking }: ARSceneProps) {
       camera={{ fov: 45, near: 0.01, far: 10, position: [0, 0, 0] }}
       style={{ background: 'transparent' }}
     >
-      <ambientLight intensity={0.9} />
-      <directionalLight position={[0.6, 1, 0.8]} intensity={2.2} />
-      <PalmCube tracking={tracking} />
+      <ambientLight intensity={0.55} />
+      <directionalLight position={[0.6, 1, 0.8]} intensity={0.9} />
+      <PalmInjury tracking={tracking} />
     </Canvas>
   );
 });
