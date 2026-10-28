@@ -47,6 +47,12 @@ Other scripts: `npm run build` (typecheck + production build into `dist/`),
 - **Rotation.** Basis from 0 → 9 (towards the fingers) and 5 → 17 (across the
   palm); their cross product is the palm normal, flipped for left hands so the
   cube always sits on the palm side.
+- **Palm only.** The cube is shown only while the palm side faces the camera:
+  the screen-facing part of the palm normal (from the same two directions,
+  using x/y only, signed by handedness) must rise above 0.3 to show the cube
+  and fall below 0.15 to hide it, so it doesn't flicker when the hand is
+  edge-on. The status pill says "Turn your palm to the camera" when it only
+  sees the back of the hand.
 - **Smoothing / fade.** Position, rotation and scale are lerped/slerped with
   factor 0.35 each frame; the cube fades out over 200 ms when the hand is lost
   and snaps back in place before fading in when it returns.
@@ -65,8 +71,6 @@ Constants at the top of `src/components/PalmCube.tsx`: `CUBE_SIZE`,
 ## Known limits
 
 - The cube is drawn on top of the video, so your fingers never occlude it.
-- When the back of your hand faces the camera, the cube sits on the far (palm)
-  side of your hand but is still drawn in front of it.
 - The WASM URL uses `@latest` as specified; if a future MediaPipe release
   breaks compatibility with the installed npm package, pin the URL to the
   version in `package.json`.

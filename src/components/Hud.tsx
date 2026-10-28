@@ -1,7 +1,16 @@
 import type { Delegate } from '../lib/handLandmarker';
 
+/** No hand / back of the hand towards the camera / palm towards the camera. */
+export type HandStatus = 'none' | 'back' | 'palm';
+
+const STATUS_LABEL: Record<HandStatus, string> = {
+  none: 'Show your hand',
+  back: 'Turn your palm to the camera',
+  palm: 'Hand detected',
+};
+
 interface HudProps {
-  handDetected: boolean;
+  handStatus: HandStatus;
   fps: number;
   delegate: Delegate | null;
   running: boolean;
@@ -11,7 +20,7 @@ interface HudProps {
 }
 
 export function Hud({
-  handDetected,
+  handStatus,
   fps,
   delegate,
   running,
@@ -22,9 +31,9 @@ export function Hud({
   return (
     <div className="hud">
       <div className="panel hud-status">
-        <span className={`pill ${handDetected ? 'pill--on' : ''}`} role="status">
+        <span className={`pill pill--${handStatus}`} role="status">
           <span className="pill-dot" aria-hidden />
-          {handDetected ? 'Hand detected' : 'Show your hand'}
+          {STATUS_LABEL[handStatus]}
         </span>
         <span className="fps" title={delegate ? `Inference on ${delegate}` : undefined}>
           <strong>{running ? fps : '–'}</strong> FPS
