@@ -3,12 +3,16 @@ import type { HandLandmarker } from '@mediapipe/tasks-vision';
 import { createHandLandmarker, type Delegate } from '../lib/handLandmarker';
 import { computeCover, createCoverRect } from '../lib/coverMapping';
 import { drawLandmarks } from '../lib/drawLandmarks';
-import { createTrackingState, type TrackingState } from '../lib/tracking';
+import { createTrackingState, palmFacingScore, type TrackingState } from '../lib/tracking';
 import { ARScene } from './ARScene';
-import { Hud } from './Hud';
+import { Hud, type HandStatus } from './Hud';
 
 /** Frames a new handedness label must persist before we believe it. */
 const HANDEDNESS_HYSTERESIS = 5;
+/** Palm-facing score above which the palm counts as visible… */
+const PALM_SHOW_SCORE = 0.3;
+/** …and below which it stops counting (the gap prevents flicker when edge-on). */
+const PALM_HIDE_SCORE = 0.15;
 const FPS_UPDATE_MS = 500;
 
 const UNSUPPORTED_MESSAGE =
@@ -31,7 +35,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
   onErrorRef.current = onError;
 
   const [phase, setPhase] = useState<Phase>('camera');
-  const [handDetected, setHandDetected] = useState(false);
+  const [handStatus, setHandStatus] = useState<HandStatus>('none');
   const [fps, setFps] = useState(0);
   const [delegate, setDelegate] = useState<Delegate | null>(null);
   const [showLandmarks, setShowLandmarks] = useState(false);
@@ -75,6 +79,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
     let lastVideoTime = -1;
     let lastTimestamp = 0;
     let handPresent = false;
+    let status: HandStatus = 'none';
     let handednessVotes = 0;
     let fpsFrames = 0;
     let fpsWindowStart = performance.now();
@@ -109,13 +114,25 @@ export function ARView({ onError, onStop }: ARViewProps) {
           handednessVotes = 0;
         }
       }
+      if (landmarks) {
+        const score = palmFacingScore(
+          landmarks,
+          tracking.isRightHand,
+          video.videoWidth,
+          video.videoHeight,
+        );
+        tracking.palmVisible = score > (tracking.palmVisible ? PALM_HIDE_SCORE : PALM_SHOW_SCORE);
+      } else {
+        tracking.palmVisible = false;
+      }
       tracking.landmarks = landmarks;
       tracking.frameId++;
+      handPresent = landmarks !== null;
 
-      const present = landmarks !== null;
-      if (present !== handPresent) {
-        handPresent = present;
-        setHandDetected(present);
+      const nextStatus: HandStatus = !handPresent ? 'none' : tracking.palmVisible ? 'palm' : 'back';
+      if (nextStatus !== status) {
+        status = nextStatus;
+        setHandStatus(nextStatus);
       }
 
       if (showLandmarksRef.current && view.width > 0 && video.videoWidth) {
@@ -204,6 +221,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
       if (stream) stopStream(stream);
       video.srcObject = null;
       tracking.landmarks = null;
+      tracking.palmVisible = false;
       tracking.video = null;
     };
   }, []);
@@ -220,7 +238,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
       </div>
 
       <Hud
-        handDetected={handDetected}
+        handStatus={handStatus}
         fps={fps}
         delegate={delegate}
         running={phase === 'running'}

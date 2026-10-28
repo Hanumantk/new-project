@@ -122,7 +122,8 @@ export function PalmCube({ tracking }: PalmCubeProps) {
     const worldPerPx = (2 * PLANE_DEPTH * Math.tan(halfFov)) / viewH;
 
     const landmarks = state.landmarks;
-    const hasHand = landmarks !== null;
+    // The cube only shows while the palm itself faces the camera.
+    const hasHand = landmarks !== null && state.palmVisible;
 
     if (landmarks && state.frameId !== s.lastFrameId) {
       s.lastFrameId = state.frameId;
