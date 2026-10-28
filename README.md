@@ -23,25 +23,31 @@ access.
 Other scripts: `npm run build` (typecheck + production build into `dist/`),
 `npm run preview`, `npm run typecheck`.
 
-## Meta Quest 3 (VR / mixed reality)
+## Meta Quest 3 (mixed reality)
 
-Click **Use a VR headset**. This mode uses the headset's own hand tracking
-(WebXR Hand Input) instead of the webcam, and places the wound on your palm
-in true 3D.
+The AR experience (your real room through passthrough, with the wound on
+your real palm, behaving like the webcam version) runs in the **Quest's own
+browser**, using the headset's hand tracking:
 
-- **Quest 3 over a USB cable (Quest Link):** install the Meta Quest Link app
-  on Windows, make it the active OpenXR runtime (Link app → Settings →
-  General), turn on hand tracking in the headset, start Quest Link, then open
-  the page in Chrome or Edge on the laptop and click **Enter VR**. Over Link
-  browsers only offer VR, so you'll see skin-toned virtual hands in a simple
-  room, with the wound on your palm.
-- **Quest's own browser (no cable):** open the site there and click
-  **Enter mixed reality** to see the wound on your real hand through
-  passthrough.
+1. In the headset, open **Browser** and go to
+   `hanumantk.github.io/new-project`.
+2. Tap **Start mixed reality**, then **Enter mixed reality**.
+3. Put the controllers down and hold up your open palm.
 
-Put the controllers down so the headset switches to hand tracking. The wound
-goes on your right hand when it's tracked, otherwise the left; a floating
-hint appears while no open hand is seen.
+To open it from the laptop over the USB cable instead of typing the address,
+enable developer mode on the Quest and run (needs `adb`, e.g. from Meta Quest
+Developer Hub):
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "https://hanumantk.github.io/new-project/" com.oculus.browser
+```
+
+**Quest Link (PC browser over the cable)** only supports VR, not
+passthrough. The page says so, and offers a VR fallback with skin-toned
+virtual hands in a simple room.
+
+The wound goes on your right hand when it's tracked, otherwise the left; a
+floating hint appears while no open hand is seen.
 
 ## How it works
 
