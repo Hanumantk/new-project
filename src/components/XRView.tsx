@@ -3,6 +3,29 @@ import type * as THREE from 'three';
 import type { HandStatus } from './Hud';
 import { XRScene, type XRMode } from './XRScene';
 
+/** Used to drop the room to the floor when the runtime has no floor-level space. */
+const STANDING_EYE_HEIGHT = 1.6;
+
+/** Asks for a session, retrying with fewer requirements if the first ask is refused. */
+async function requestSession(xr: XRSystem, mode: XRSessionMode): Promise<XRSession> {
+  try {
+    return await xr.requestSession(mode, {
+      requiredFeatures: ['local-floor'],
+      optionalFeatures: ['hand-tracking'],
+    });
+  } catch (err) {
+    console.warn('Session with a floor-level space refused, retrying without requirements.', err);
+    return xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking'] });
+  }
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error || err instanceof DOMException) {
+    return err.message ? `${err.name}: ${err.message}` : err.name;
+  }
+  return String(err);
+}
+
 interface Support {
   ar: boolean;
   vr: boolean;
@@ -28,7 +51,8 @@ export function XRView({ onExit }: XRViewProps) {
   const [support, setSupport] = useState<Support | null>(null);
   const [mode, setMode] = useState<XRMode | null>(null);
   const [handStatus, setHandStatus] = useState<HandStatus>('none');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; detail: string } | null>(null);
+  const [floorY, setFloorY] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,23 +69,38 @@ export function XRView({ onExit }: XRViewProps) {
 
   const enter = async (next: XRMode) => {
     const renderer = rendererRef.current;
-    if (!renderer || !navigator.xr) return;
+    const xr = navigator.xr;
+    if (!renderer || !xr) return;
     setError(null);
+
+    let session: XRSession | null = null;
     try {
-      const session = await navigator.xr.requestSession(next === 'ar' ? 'immersive-ar' : 'immersive-vr', {
-        requiredFeatures: ['local-floor'],
-        optionalFeatures: ['hand-tracking'],
-      });
+      session = await requestSession(xr, next === 'ar' ? 'immersive-ar' : 'immersive-vr');
+    } catch (err) {
+      console.error(err);
+      setError({ message: 'The headset refused to start the session.', detail: describeError(err) });
+      return;
+    }
+
+    try {
+      // Prefer a floor-level space; without one, the origin is at head height.
+      const floorLevel = await session
+        .requestReferenceSpace('local-floor')
+        .then(() => true)
+        .catch(() => false);
       session.addEventListener('end', () => setMode(null));
+      renderer.xr.setReferenceSpaceType(floorLevel ? 'local-floor' : 'local');
+      setFloorY(floorLevel ? 0 : -STANDING_EYE_HEIGHT);
       setMode(next);
-      renderer.xr.setReferenceSpaceType('local-floor');
       await renderer.xr.setSession(session);
     } catch (err) {
       console.error(err);
       setMode(null);
-      setError(
-        'The headset session couldn’t start. Check the headset is connected and awake, then try again.',
-      );
+      void session.end().catch(() => {});
+      setError({
+        message: 'The session started but the page couldn’t draw into the headset.',
+        detail: describeError(err),
+      });
     }
   };
 
@@ -74,7 +113,7 @@ export function XRView({ onExit }: XRViewProps) {
   return (
     <div className="xr-root">
       <div className="xr-canvas">
-        <XRScene mode={mode} rendererRef={rendererRef} onHandStatus={setHandStatus} />
+        <XRScene mode={mode} floorY={floorY} rendererRef={rendererRef} onHandStatus={setHandStatus} />
       </div>
 
       <div className="panel xr-card">
@@ -142,9 +181,31 @@ export function XRView({ onExit }: XRViewProps) {
         )}
 
         {error && (
-          <p className="intro-error" role="alert">
-            {error}
-          </p>
+          <div className="xr-error" role="alert">
+            <p className="intro-error">
+              {error.message}
+              <span className="xr-error-detail">{error.detail}</span>
+            </p>
+            <p>Things to check, then press Enter VR again:</p>
+            <ol className="xr-steps">
+              <li>
+                The headset is <strong>inside Quest Link</strong> (you see the Link home screen in it),
+                not just plugged in.
+              </li>
+              <li>
+                Laptops with two graphics chips: Windows Settings → System → Display → Graphics → add
+                Chrome/Edge and choose <strong>High performance</strong>, then restart the browser.
+              </li>
+              <li>
+                In the Meta Quest Link app, Settings → General → OpenXR runtime is set to
+                <strong> Meta Quest Link</strong>, and SteamVR or other VR apps are closed.
+              </li>
+              <li>
+                Still stuck? Open <strong>{window.location.href}</strong> in the Quest’s own browser —
+                no cable needed.
+              </li>
+            </ol>
+          </div>
         )}
 
         {!mode && (

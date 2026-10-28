@@ -376,3 +376,30 @@ button {
   border: none;
   background: transparent;
 }
+
+.xr-error {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+.xr-error .intro-error {
+  margin: 0;
+}
+
+.xr-error-detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.8;
+  word-break: break-word;
+}
+
+.xr-card .intro-error {
+  color: #8a3b2a;
+  background: #fbefe9;
+  border-radius: 10px;
+  padding: 12px 14px;
+}

@@ -11,6 +11,8 @@ export type XRMode = 'ar' | 'vr';
 interface XRSceneProps {
   /** The active session's mode, or null before entering / after leaving. */
   mode: XRMode | null;
+  /** Height of the floor in the session's reference space (below 0 without a floor-level space). */
+  floorY: number;
   rendererRef: RefObject<THREE.WebGLRenderer | null>;
   onHandStatus: (status: HandStatus) => void;
 }
@@ -20,20 +22,20 @@ interface XRSceneProps {
  * hand tracking. In VR it adds virtual hands and a simple room; in mixed
  * reality the real room and hands show through passthrough.
  */
-export const XRScene = memo(function XRScene({ mode, rendererRef, onHandStatus }: XRSceneProps) {
+export const XRScene = memo(function XRScene({ mode, floorY, rendererRef, onHandStatus }: XRSceneProps) {
   const pose = useRef<HandPose>(createHandPose());
   const isVR = mode !== 'ar';
 
   return (
     <Canvas
-      gl={{ alpha: true, antialias: true }}
+      gl={createXRRenderer}
       dpr={[1, 2]}
       camera={{ fov: 60, near: 0.01, far: 50, position: [0, 1.5, 0.8] }}
       onCreated={({ gl }) => {
         rendererRef.current = gl;
       }}
     >
-      {isVR && <VRRoom />}
+      {isVR && <VRRoom floorY={floorY} />}
       <hemisphereLight args={['#ffffff', '#c9cfc7', 0.8]} />
       <directionalLight position={[0.6, 2.2, 0.8]} intensity={1} />
       <XRPoseSource pose={pose} showHands={isVR} />
@@ -44,16 +46,35 @@ export const XRScene = memo(function XRScene({ mode, rendererRef, onHandStatus }
   );
 });
 
+/**
+ * Creates the WebGL context XR-compatible from the start. Otherwise three.js
+ * converts it when the session starts, which on laptops with two GPUs can
+ * lose the context and make the session fail to start.
+ */
+function createXRRenderer(props: { canvas: unknown }) {
+  const canvas = props.canvas as HTMLCanvasElement;
+  const attributes = {
+    alpha: true,
+    antialias: true,
+    powerPreference: 'high-performance',
+    xrCompatible: true,
+  } as const;
+  const context = canvas.getContext('webgl2', attributes) as WebGL2RenderingContext | null;
+  return new THREE.WebGLRenderer({ canvas, ...attributes, ...(context ? { context } : {}) });
+}
+
 /** A calm, light room so VR isn't a black void: backdrop, floor and a grid. */
-function VRRoom() {
+function VRRoom({ floorY }: { floorY: number }) {
   return (
     <>
       <color attach="background" args={['#e9ece8']} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[6, 64]} />
-        <meshStandardMaterial color="#d6dbd4" roughness={1} />
-      </mesh>
-      <gridHelper args={[12, 24, '#b9c1b7', '#c8cec6']} position={[0, 0.001, 0]} />
+      <group position={[0, floorY, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[6, 64]} />
+          <meshStandardMaterial color="#d6dbd4" roughness={1} />
+        </mesh>
+        <gridHelper args={[12, 24, '#b9c1b7', '#c8cec6']} position={[0, 0.001, 0]} />
+      </group>
     </>
   );
 }
