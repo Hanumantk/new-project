@@ -3,16 +3,16 @@ import type { HandLandmarker } from '@mediapipe/tasks-vision';
 import { createHandLandmarker, type Delegate } from '../lib/handLandmarker';
 import { computeCover, createCoverRect } from '../lib/coverMapping';
 import { drawLandmarks } from '../lib/drawLandmarks';
-import { createTrackingState, palmFacingScore, type TrackingState } from '../lib/tracking';
+import { createTrackingState, handOpenness, type TrackingState } from '../lib/tracking';
 import { ARScene } from './ARScene';
 import { Hud, type HandStatus } from './Hud';
 
 /** Frames a new handedness label must persist before we believe it. */
 const HANDEDNESS_HYSTERESIS = 5;
-/** Palm-facing score above which the palm counts as visible… */
-const PALM_SHOW_SCORE = 0.3;
-/** …and below which it stops counting (the gap prevents flicker when edge-on). */
-const PALM_HIDE_SCORE = 0.15;
+/** Openness (see handOpenness) above which a closed hand counts as open… */
+const OPEN_HAND_SCORE = 1.3;
+/** …and below which an open hand counts as closed (the gap prevents flicker). */
+const CLOSED_HAND_SCORE = 1.15;
 const FPS_UPDATE_MS = 500;
 
 const UNSUPPORTED_MESSAGE =
@@ -115,21 +115,16 @@ export function ARView({ onError, onStop }: ARViewProps) {
         }
       }
       if (landmarks) {
-        const score = palmFacingScore(
-          landmarks,
-          tracking.isRightHand,
-          video.videoWidth,
-          video.videoHeight,
-        );
-        tracking.palmVisible = score > (tracking.palmVisible ? PALM_HIDE_SCORE : PALM_SHOW_SCORE);
+        const openness = handOpenness(landmarks, video.videoWidth, video.videoHeight);
+        tracking.handOpen = openness > (tracking.handOpen ? CLOSED_HAND_SCORE : OPEN_HAND_SCORE);
       } else {
-        tracking.palmVisible = false;
+        tracking.handOpen = false;
       }
       tracking.landmarks = landmarks;
       tracking.frameId++;
       handPresent = landmarks !== null;
 
-      const nextStatus: HandStatus = !handPresent ? 'none' : tracking.palmVisible ? 'palm' : 'back';
+      const nextStatus: HandStatus = !handPresent ? 'none' : tracking.handOpen ? 'open' : 'closed';
       if (nextStatus !== status) {
         status = nextStatus;
         setHandStatus(nextStatus);
@@ -221,7 +216,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
       if (stream) stopStream(stream);
       video.srcObject = null;
       tracking.landmarks = null;
-      tracking.palmVisible = false;
+      tracking.handOpen = false;
       tracking.video = null;
     };
   }, []);

@@ -29,6 +29,7 @@ Other scripts: `npm run build` (typecheck + production build into `dist/`),
 | Camera, detection loop, landmark debug overlay, cleanup | `src/components/ARView.tsx` |
 | Transparent R3F canvas + lights | `src/components/ARScene.tsx` |
 | Cube placement, rotation, scale, smoothing, fade | `src/components/PalmCube.tsx` |
+| Invisible hand that hides the cube behind it | `src/lib/handOccluder.ts` |
 | HandLandmarker setup (VIDEO mode, 1 hand, GPU → CPU fallback) | `src/lib/handLandmarker.ts` |
 | `object-fit: cover` maths shared by 2D and 3D overlays | `src/lib/coverMapping.ts` |
 
@@ -38,8 +39,10 @@ Other scripts: `npm run build` (typecheck + production build into `dist/`),
   for the video, and the virtual camera's field of view is set to a typical
   webcam's (~41° vertical) seen through that crop, so the cube's perspective
   matches the image.
-- **Position.** Palm centre = mean of landmarks 0, 5, 9, 13, 17, mapped to view
-  pixels and then onto a plane 0.5 m in front of the camera. The cube (6 cm)
+- **Position.** Each landmark is mapped through the cover crop to a view pixel
+  and placed along that pixel's camera ray, around a plane 0.5 m in front of
+  the camera (offset by MediaPipe's relative depth). Palm centre = mean of
+  landmarks 0, 5, 9, 13, 17. The cube (6 cm)
   sits just above the palm along the palm normal, with a soft shadow blob on
   the palm.
 - **Scale.** The wrist → middle-knuckle (0 → 9) length, measured on that plane
@@ -47,12 +50,15 @@ Other scripts: `npm run build` (typecheck + production build into `dist/`),
 - **Rotation.** Basis from 0 → 9 (towards the fingers) and 5 → 17 (across the
   palm); their cross product is the palm normal, flipped for left hands so the
   cube always sits on the palm side.
-- **Palm only.** The cube is shown only while the palm side faces the camera:
-  the screen-facing part of the palm normal (from the same two directions,
-  using x/y only, signed by handedness) must rise above 0.3 to show the cube
-  and fall below 0.15 to hide it, so it doesn't flicker when the hand is
-  edge-on. The status pill says "Turn your palm to the camera" when it only
-  sees the back of the hand.
+- **Occlusion.** An invisible 3D stand-in for your hand (finger capsules
+  plus a palm plate, built from all 21 landmarks) writes depth but no colour,
+  so the real hand hides whatever part of the cube is behind it: from the
+  back of the hand the cube is hidden (except where it would really peek
+  between fingers or past the edge), from the side the part sticking out of
+  the palm stays visible. `src/lib/handOccluder.ts`.
+- **Closed hand.** A closed hand has no palm to rest on: when the fingertips
+  come in towards the wrist (openness below 1.15, back above 1.3) the cube
+  fades out and the status pill says "Open your hand".
 - **Smoothing / fade.** Position, rotation and scale are lerped/slerped with
   factor 0.35 each frame; the cube fades out over 200 ms when the hand is lost
   and snaps back in place before fading in when it returns.
@@ -70,7 +76,9 @@ Constants at the top of `src/components/PalmCube.tsx`: `CUBE_SIZE`,
 
 ## Known limits
 
-- The cube is drawn on top of the video, so your fingers never occlude it.
+- The hand stand-in is an approximation (capsules and a flat palm), so the
+  cube's cut-off edges follow your hand only roughly, and MediaPipe's depth
+  estimate is noisy, so how much peeks out from behind the hand can wobble.
 - The WASM URL uses `@latest` as specified; if a future MediaPipe release
   breaks compatibility with the installed npm package, pin the URL to the
   version in `package.json`.

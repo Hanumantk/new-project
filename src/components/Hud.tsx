@@ -1,12 +1,12 @@
 import type { Delegate } from '../lib/handLandmarker';
 
-/** No hand / back of the hand towards the camera / palm towards the camera. */
-export type HandStatus = 'none' | 'back' | 'palm';
+/** No hand / a closed hand (no cube) / an open hand (cube on the palm). */
+export type HandStatus = 'none' | 'closed' | 'open';
 
 const STATUS_LABEL: Record<HandStatus, string> = {
   none: 'Show your hand',
-  back: 'Turn your palm to the camera',
-  palm: 'Hand detected',
+  closed: 'Open your hand',
+  open: 'Hand detected',
 };
 
 interface HudProps {

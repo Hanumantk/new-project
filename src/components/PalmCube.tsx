@@ -3,7 +3,8 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
-import { computeCover, createCoverRect } from '../lib/coverMapping';
+import { computeCover, createCoverRect, type CoverRect } from '../lib/coverMapping';
+import { HandOccluder } from '../lib/handOccluder';
 import { LM, PALM_INDICES, type TrackingState } from '../lib/tracking';
 
 /** Cube edge length in metres. */
@@ -23,6 +24,15 @@ const MAX_SCALE = 4;
 
 const CUBE_COLOR = '#8EDDB0';
 const SHADOW_OPACITY = 0.38;
+
+/** Everything needed to turn a landmark into a world-space point. */
+interface Projection {
+  cover: CoverRect;
+  viewW: number;
+  viewH: number;
+  videoW: number;
+  worldPerPx: number;
+}
 
 interface PalmCubeProps {
   tracking: RefObject<TrackingState>;
@@ -62,6 +72,7 @@ export function PalmCube({ tracking }: PalmCubeProps) {
       }),
     [shadowTexture],
   );
+  const occluder = useMemo(() => new HandOccluder(), []);
 
   useEffect(
     () => () => {
@@ -69,14 +80,17 @@ export function PalmCube({ tracking }: PalmCubeProps) {
       cubeMaterial.dispose();
       shadowMaterial.dispose();
       shadowTexture.dispose();
+      occluder.dispose();
     },
-    [geometry, cubeMaterial, shadowMaterial, shadowTexture],
+    [geometry, cubeMaterial, shadowMaterial, shadowTexture, occluder],
   );
 
   // Everything below is allocated once and reused every frame.
   const scratch = useMemo(
     () => ({
-      cover: createCoverRect(),
+      projection: { cover: createCoverRect(), viewW: 0, viewH: 0, videoW: 0, worldPerPx: 0 },
+      targetJoints: Array.from({ length: 21 }, () => new THREE.Vector3()),
+      joints: Array.from({ length: 21 }, () => new THREE.Vector3()),
       targetPosition: new THREE.Vector3(),
       targetQuaternion: new THREE.Quaternion(),
       targetScale: 1,
@@ -88,8 +102,7 @@ export function PalmCube({ tracking }: PalmCubeProps) {
       xAxis: new THREE.Vector3(),
       yAxis: new THREE.Vector3(),
       zAxis: new THREE.Vector3(),
-      a: new THREE.Vector3(),
-      b: new THREE.Vector3(),
+      normal: new THREE.Vector3(),
       basis: new THREE.Matrix4(),
     }),
     [],
@@ -102,16 +115,16 @@ export function PalmCube({ tracking }: PalmCubeProps) {
     if (!group || !state || !video || !video.videoWidth) return;
 
     const s = scratch;
-    const viewW = size.width;
-    const viewH = size.height;
-    const videoW = video.videoWidth;
-    const videoH = video.videoHeight;
-    const cover = computeCover(s.cover, viewW, viewH, videoW, videoH);
+    const p = s.projection;
+    p.viewW = size.width;
+    p.viewH = size.height;
+    p.videoW = video.videoWidth;
+    const cover = computeCover(p.cover, p.viewW, p.viewH, video.videoWidth, video.videoHeight);
 
     // Give the virtual camera the webcam's optics as seen through the cover
     // crop, so the cube's perspective matches the real image.
     const halfFov = Math.atan(
-      Math.tan(THREE.MathUtils.degToRad(WEBCAM_VFOV_DEG) / 2) * (viewH / cover.height),
+      Math.tan(THREE.MathUtils.degToRad(WEBCAM_VFOV_DEG) / 2) * (p.viewH / cover.height),
     );
     const fovDeg = THREE.MathUtils.radToDeg(halfFov * 2);
     if (Math.abs(camera.fov - fovDeg) > 0.01) {
@@ -119,15 +132,15 @@ export function PalmCube({ tracking }: PalmCubeProps) {
       camera.updateProjectionMatrix();
     }
     // World units per view pixel on the tracking plane.
-    const worldPerPx = (2 * PLANE_DEPTH * Math.tan(halfFov)) / viewH;
+    p.worldPerPx = (2 * PLANE_DEPTH * Math.tan(halfFov)) / p.viewH;
 
     const landmarks = state.landmarks;
-    // The cube only shows while the palm itself faces the camera.
-    const hasHand = landmarks !== null && state.palmVisible;
+    // A closed hand has no palm to rest on, so the cube only shows while it's open.
+    const hasHand = landmarks !== null && state.handOpen;
 
     if (landmarks && state.frameId !== s.lastFrameId) {
       s.lastFrameId = state.frameId;
-      updateTargets(landmarks, state.isRightHand, videoW, videoH, viewW, viewH, worldPerPx);
+      updateTargets(landmarks, state.isRightHand, p);
     }
 
     // Snap rather than glide when the cube is (re)appearing from invisible.
@@ -135,10 +148,12 @@ export function PalmCube({ tracking }: PalmCubeProps) {
       group.position.copy(s.targetPosition);
       group.quaternion.copy(s.targetQuaternion);
       group.scale.setScalar(s.targetScale);
+      s.joints.forEach((joint, i) => joint.copy(s.targetJoints[i]));
     } else if (s.hasTarget) {
       group.position.lerp(s.targetPosition, SMOOTHING);
       group.quaternion.slerp(s.targetQuaternion, SMOOTHING);
       group.scale.setScalar(THREE.MathUtils.lerp(group.scale.x, s.targetScale, SMOOTHING));
+      s.joints.forEach((joint, i) => joint.lerp(s.targetJoints[i], SMOOTHING));
     }
 
     const fadeStep = delta / FADE_SECONDS;
@@ -146,50 +161,43 @@ export function PalmCube({ tracking }: PalmCubeProps) {
     cubeMaterial.opacity = s.opacity;
     shadowMaterial.opacity = SHADOW_OPACITY * s.opacity;
     group.visible = s.opacity > 0;
+
+    // Keep the invisible hand in step with the (smoothed) cube so the real
+    // hand hides whatever part of the cube is behind it.
+    occluder.root.visible = group.visible;
+    if (group.visible) {
+      s.normal.set(0, 1, 0).applyQuaternion(group.quaternion);
+      occluder.update(s.joints, s.normal, group.position, group.scale.x);
+    }
   });
 
-  function updateTargets(
-    landmarks: NormalizedLandmark[],
-    isRightHand: boolean,
-    videoW: number,
-    videoH: number,
-    viewW: number,
-    viewH: number,
-    worldPerPx: number,
-  ) {
+  function updateTargets(landmarks: NormalizedLandmark[], isRightHand: boolean, p: Projection) {
     const s = scratch;
-    const cover = s.cover;
 
-    // Palm centre: average of the wrist and the four knuckles, mapped through
-    // the cover crop into view pixels, then onto the tracking plane.
-    let nx = 0;
-    let ny = 0;
-    for (const i of PALM_INDICES) {
-      nx += landmarks[i].x;
-      ny += landmarks[i].y;
-    }
-    nx /= PALM_INDICES.length;
-    ny /= PALM_INDICES.length;
-    const px = cover.offsetX + nx * cover.width;
-    const py = cover.offsetY + ny * cover.height;
-    s.targetPosition.set((px - viewW / 2) * worldPerPx, -(py - viewH / 2) * worldPerPx, -PLANE_DEPTH);
+    // All 21 landmarks as 3D points in front of the camera.
+    for (let i = 0; i < landmarks.length; i++) landmarkToWorld(s.targetJoints[i], landmarks[i], p);
 
-    // Hand vectors in video pixels, converted to three.js axes (y up, z towards camera).
-    toThree(s.a, landmarks[LM.WRIST], videoW, videoH);
-    toThree(s.fingers, landmarks[LM.MIDDLE_MCP], videoW, videoH).sub(s.a);
-    toThree(s.a, landmarks[LM.INDEX_MCP], videoW, videoH);
-    toThree(s.across, landmarks[LM.PINKY_MCP], videoW, videoH).sub(s.a);
+    // Palm centre: average of the wrist and the four knuckles.
+    s.targetPosition.set(0, 0, 0);
+    for (const i of PALM_INDICES) s.targetPosition.add(s.targetJoints[i]);
+    s.targetPosition.divideScalar(PALM_INDICES.length);
 
-    // Scale: palm length on the tracking plane relative to a real palm.
-    const palmWorld = s.fingers.length() * cover.scale * worldPerPx;
-    s.targetScale = THREE.MathUtils.clamp(palmWorld / REAL_PALM_LENGTH, MIN_SCALE, MAX_SCALE);
+    s.fingers.subVectors(s.targetJoints[LM.MIDDLE_MCP], s.targetJoints[LM.WRIST]);
+    s.across.subVectors(s.targetJoints[LM.PINKY_MCP], s.targetJoints[LM.INDEX_MCP]);
+
+    // Scale: palm length relative to a real palm.
+    s.targetScale = THREE.MathUtils.clamp(
+      s.fingers.length() / REAL_PALM_LENGTH,
+      MIN_SCALE,
+      MAX_SCALE,
+    );
 
     // Rotation: y = palm normal (out of the palm), z = towards the fingers.
     // fingers × across points out of the palm for a right hand and out of the
     // back of a left hand, so flip it for left hands.
     s.yAxis.crossVectors(s.fingers, s.across);
     if (!isRightHand) s.yAxis.negate();
-    if (s.yAxis.lengthSq() < 1e-6) {
+    if (s.yAxis.lengthSq() < 1e-12) {
       s.hasTarget = true;
       return; // Degenerate (hand edge-on): keep the previous orientation.
     }
@@ -202,26 +210,35 @@ export function PalmCube({ tracking }: PalmCubeProps) {
   }
 
   return (
-    <group ref={groupRef} visible={false}>
-      <mesh
-        geometry={geometry}
-        material={cubeMaterial}
-        position={[0, CUBE_SIZE / 2 + HOVER_GAP, 0]}
-      />
-      <mesh material={shadowMaterial} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
-        <planeGeometry args={[CUBE_SIZE * 1.7, CUBE_SIZE * 1.7]} />
-      </mesh>
-    </group>
+    <>
+      <primitive object={occluder.root} />
+      <group ref={groupRef} visible={false}>
+        <mesh
+          geometry={geometry}
+          material={cubeMaterial}
+          position={[0, CUBE_SIZE / 2 + HOVER_GAP, 0]}
+        />
+        <mesh material={shadowMaterial} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
+          <planeGeometry args={[CUBE_SIZE * 1.7, CUBE_SIZE * 1.7]} />
+        </mesh>
+      </group>
+    </>
   );
 }
 
 /**
- * MediaPipe landmark → three.js-oriented vector in video pixels.
- * MediaPipe's z uses roughly the same scale as x and is smaller when closer
- * to the camera, so it is scaled by the video width and negated.
+ * MediaPipe landmark → world point. x/y go through the cover crop to a view
+ * pixel, whose camera ray we follow to the landmark's depth: the tracking
+ * plane, shifted by MediaPipe's relative z (same scale as x, smaller = closer).
+ * Following the ray keeps every point exactly over the hand on screen.
  */
-function toThree(out: THREE.Vector3, lm: NormalizedLandmark, videoW: number, videoH: number) {
-  return out.set(lm.x * videoW, -lm.y * videoH, -lm.z * videoW);
+function landmarkToWorld(out: THREE.Vector3, lm: NormalizedLandmark, p: Projection) {
+  const { cover, viewW, viewH, videoW, worldPerPx } = p;
+  const px = cover.offsetX + lm.x * cover.width;
+  const py = cover.offsetY + lm.y * cover.height;
+  const depth = Math.max(PLANE_DEPTH + lm.z * videoW * cover.scale * worldPerPx, PLANE_DEPTH * 0.2);
+  const k = (worldPerPx / PLANE_DEPTH) * depth;
+  return out.set((px - viewW / 2) * k, -(py - viewH / 2) * k, -depth);
 }
 
 function createShadowTexture(): THREE.CanvasTexture {

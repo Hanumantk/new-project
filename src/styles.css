@@ -215,17 +215,17 @@ button {
   transition: background-color 200ms ease, box-shadow 200ms ease;
 }
 
-.pill--palm {
+.pill--open {
   background: #ddf4e6;
   color: #1d6b42;
 }
 
-.pill--palm .pill-dot {
+.pill--open .pill-dot {
   background: var(--mint-strong);
   box-shadow: 0 0 0 3px rgba(47, 158, 99, 0.2);
 }
 
-.pill--back .pill-dot {
+.pill--closed .pill-dot {
   background: #d9a441;
 }
 
