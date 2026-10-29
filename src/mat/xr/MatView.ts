@@ -5,7 +5,7 @@ import { layoutKit } from '../lib/layout';
 import { cornerTicks, rectPath, ribbonGeometry } from './outlines';
 import { BadgeBatch, FootprintBatch } from './slotBatches';
 import { BADGE_RADIUS, SlotView } from './SlotView';
-import { COLORS } from './text';
+import { COLORS, textMaterial } from './text';
 
 /** Lift above the table so lines don't flicker against virtual fills. */
 const LINE_LIFT = 0.0015;
@@ -42,12 +42,14 @@ export class MatView {
     opacity: 0.55,
     depthWrite: false,
     side: THREE.DoubleSide,
+    toneMapped: false,
   });
   private readonly tickMaterial = new THREE.MeshBasicMaterial({
     color: COLORS.mint,
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
+    toneMapped: false,
   });
   private opacity = 1;
   /** Index of the highlighted item in step mode, or -1. */
@@ -86,6 +88,7 @@ export class MatView {
     this.slots = kit.items.map((item) => new SlotView(item));
     this.badges = new BadgeBatch(BADGE_RADIUS, this.slots.length);
     this.labels = new BatchedText();
+    this.labels.material = textMaterial();
     this.labels.renderOrder = 20;
     for (const slot of this.slots) {
       this.overlay.add(slot.visual, slot.label);

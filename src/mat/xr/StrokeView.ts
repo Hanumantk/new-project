@@ -30,13 +30,14 @@ export class StrokeView {
 
   constructor() {
     const geometry = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
-    this.coreMaterial = new THREE.MeshBasicMaterial({ color: '#e9fbf1', transparent: true, depthWrite: false });
+    this.coreMaterial = new THREE.MeshBasicMaterial({ color: '#e9fbf1', transparent: true, depthWrite: false, toneMapped: false });
     this.glowMaterial = new THREE.MeshBasicMaterial({
       color: COLORS.mint,
       transparent: true,
       opacity: 0.35,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
+      toneMapped: false,
     });
     this.core = new THREE.InstancedMesh(geometry, this.coreMaterial, STROKE_CAPACITY);
     this.glow = new THREE.InstancedMesh(geometry, this.glowMaterial, STROKE_CAPACITY);

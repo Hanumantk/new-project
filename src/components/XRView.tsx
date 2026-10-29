@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadWoundOpacity, saveWoundOpacity } from '../lib/woundOpacity';
+import { KitSummary } from '../mat/KitSummary';
+import { loadKit, type KitResult } from '../mat/lib/kit';
+import type { MatSystem } from '../mat/xr/MatSystem';
 import type * as THREE from 'three';
 import type { HandStatus } from './Hud';
 import { OpacitySlider } from './OpacitySlider';
@@ -8,16 +11,20 @@ import { XRScene, type XRMode } from './XRScene';
 /** Used to drop the room to the floor when the runtime has no floor-level space. */
 const STANDING_EYE_HEIGHT = 1.6;
 
+/** Mixed reality also asks for what the material mat uses to find and stick to the table. */
+const MAT_FEATURES = ['plane-detection', 'anchors', 'hit-test'];
+
 /** Asks for a session, retrying with fewer requirements if the first ask is refused. */
 async function requestSession(xr: XRSystem, mode: XRSessionMode): Promise<XRSession> {
+  const extras = mode === 'immersive-ar' ? MAT_FEATURES : [];
   try {
     return await xr.requestSession(mode, {
       requiredFeatures: ['local-floor'],
-      optionalFeatures: ['hand-tracking'],
+      optionalFeatures: ['hand-tracking', ...extras],
     });
   } catch (err) {
     console.warn('Session with a floor-level space refused, retrying without requirements.', err);
-    return xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking'] });
+    return xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking', ...extras] });
   }
 }
 
@@ -101,6 +108,29 @@ export function XRView({ onExit }: XRViewProps) {
     saveWoundOpacity(woundOpacity);
   }, [woundOpacity]);
 
+  // The material mat's kit, laid out on the table in mixed reality.
+  const [kitResult, setKitResult] = useState<KitResult | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadKit().then((result) => !cancelled && setKitResult(result));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const matSystemRef = useRef<MatSystem | null>(null);
+  const onMatSystem = useCallback((system: MatSystem | null) => {
+    matSystemRef.current = system;
+  }, []);
+  // ?test (for the emulator): T traces a test mat rectangle.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('test')) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code === 'KeyT') matSystemRef.current?.traceTestRectangle();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const xr = navigator.xr;
@@ -167,6 +197,8 @@ export function XRView({ onExit }: XRViewProps) {
           onHandStatus={setHandStatus}
           woundOpacity={woundOpacityRef}
           onWoundOpacityChange={setWoundOpacity}
+          kit={kitResult?.ok ? kitResult.kit : null}
+          onMatSystem={onMatSystem}
         />
       </div>
 
@@ -188,6 +220,12 @@ export function XRView({ onExit }: XRViewProps) {
               In the headset, press and slide the “Wound opacity” panel below-left of your view with a
               fingertip.
             </p>
+            {mode === 'ar' && kitResult?.ok && (
+              <p className="xr-note">
+                To lay out your materials, pinch and trace a rectangle on your table: each item gets a
+                true-size outline with its quantity.
+              </p>
+            )}
             <button type="button" className="button button--primary" onClick={exitSession}>
               Exit headset
             </button>
@@ -219,12 +257,9 @@ export function XRView({ onExit }: XRViewProps) {
                   Enter mixed reality
                 </button>
               )}
-              {support.vr && (
-                <button
-                  type="button"
-                  className={support.ar ? 'panel button' : 'button button--primary'}
-                  onClick={() => enter('vr')}
-                >
+              {/* This is an AR experience: VR is only the fallback where passthrough isn't possible. */}
+              {support.vr && !support.ar && (
+                <button type="button" className="button button--primary" onClick={() => enter('vr')}>
                   Enter VR
                 </button>
               )}
@@ -267,6 +302,8 @@ export function XRView({ onExit }: XRViewProps) {
             </ol>
           </div>
         )}
+
+        {support?.ar && <KitSummary result={kitResult} />}
 
         {!mode && (
           <button type="button" className="button button--quiet xr-back" onClick={onExit}>

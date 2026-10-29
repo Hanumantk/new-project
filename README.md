@@ -67,9 +67,10 @@ Developer Hub):
 adb shell am start -a android.intent.action.VIEW -d "https://hanumantk.github.io/new-project/" com.oculus.browser
 ```
 
-**Quest Link (PC browser over the cable)** only supports VR, not
+This is an AR experience: where mixed reality is available, it's the only
+option. **Quest Link (PC browser over the cable)** only supports VR, not
 passthrough. The page says so, and offers a VR fallback with skin-toned
-virtual hands in a simple room.
+virtual hands in a simple room (without the material mat).
 
 The wound goes on your right hand when it's tracked, otherwise the left; a
 floating hint appears while no open hand is seen.
@@ -87,18 +88,19 @@ camera's pixels, which WebXR doesn't give a page, and the bruise is laid
 over rather than multiplied, since passthrough is composited by the
 headset.
 
-## Material Mat (Quest 3 / 3S, passthrough AR)
+## Material mat (in the mixed-reality injury simulation)
 
-A second page, **`material-mat.html`**
-(`hanumantk.github.io/new-project/material-mat.html`, linked from the start
-screen), lays out everything you need for a ~5 cm scar-wax cut on the palm
-on your real table. Each material and tool gets a true-to-size outline, its
-quantity and its step number. You put the real things on the outlines.
+Inside the same mixed-reality session as the wound, you can lay out
+everything you need for a ~5 cm scar-wax cut on the palm on your real
+table. Each material and tool gets a true-to-size outline, its quantity
+and its step number. You put the real things on the outlines while the
+wound stays on your palm. It's only in mixed reality, not in the VR
+fallback.
 
 ### In the headset
 
-1. Open the page in **Quest Browser**, tap **Enter AR**, put the controllers
-   down.
+1. In **Quest Browser**, tap **Start mixed reality**, then **Enter mixed
+   reality**, and put the controllers down.
 2. **Draw the mat:** pinch thumb and index together on the table and trace
    a rectangle around the area, then let go. A glowing line follows your
    pinch. Anything under 25 × 20 cm is refused with a prompt to redraw.
@@ -114,10 +116,11 @@ quantity and its step number. You put the real things on the outlines.
      and dims the rest to 20%.
    - **Redraw** removes the mat; tap twice to confirm.
 5. **Turn your left palm up** and hold it for half a second to hide or show
-   the controls.
-6. Next time, the page offers **Restore last mat** (Quest's persistent
-   anchors). The mat reappears where you left it once the headset
-   recognises the room.
+   the controls. This works while your right hand is tracked; otherwise the
+   wound is on your left palm and turning it up just shows the wound.
+6. Next time you enter mixed reality, the last mat is restored
+   automatically (Quest's persistent anchors). It reappears where you left
+   it once the headset recognises the room. Redraw replaces it.
 
 How it finds the table height: a detected horizontal plane under the stroke
 (if you've done Space Setup), otherwise a hit test straight down, otherwise
@@ -129,10 +132,11 @@ edge facing you. Points from your hand arriving or lifting off are ignored.
 ### Editing the kit
 
 The kit is **`public/material-mat/materials.json`**. It's loaded when the
-page opens, so changing it (and pushing, which redeploys) changes the mat
-with no code changes. The page lists the kit under the Enter AR button, so
-you can check an edit without a headset. A broken file is reported there,
-naming the item and field. `materials.schema.json` next to it gives editors
+headset page opens, so changing it (and pushing, which redeploys) changes
+the mat with no code changes. The headset page (after **Start mixed
+reality**) lists the kit under "Material mat", so you can check an edit
+without a headset. A broken file is reported there, naming the item and
+field. `materials.schema.json` next to it gives editors
 such as VS Code autocomplete and checking.
 
 Each item:
@@ -154,9 +158,8 @@ adjust them. Up to 64 items.
    in Chrome or Edge. Pick a **Meta Quest 3**, and switch its input to
    **hands**. To get detected planes (a table to snap to), load one of the
    emulator's rooms; without one the mat uses the pinch height.
-2. Run `npm run dev` and open
-   `http://localhost:5173/material-mat.html?test`. Enter AR appears once
-   the emulator is active.
+2. Run `npm run dev`, open `http://localhost:5173/?test`, tap **Start
+   mixed reality**, then **Enter mixed reality**.
 3. **Simulate a pinch:** each hand's panel has a **Pinch** control. Drag it
    to 1 to pinch, back to 0 to let go. In the emulator's Play mode, hold
    the **left mouse button** to pinch the left hand or the **right mouse
@@ -172,7 +175,7 @@ adjust them. Up to 64 items.
    so the index fingertip goes into a button from the front. **Palm up:**
    rotate the left hand palm-up and hold.
 6. The emulator keeps persistent anchors in the browser, so leaving and
-   choosing **Restore last mat** brings the same mat back.
+   entering mixed reality again brings the same mat back.
 
 ### Performance
 
@@ -185,8 +188,9 @@ reuses preallocated objects throughout.
 
 | Piece | File |
 | --- | --- |
-| Page: support check, Enter AR / Restore, kit list and errors, `?test` | `src/mat/MatPage.tsx` |
-| Session, frame loop, drawing → table height → fit → anchor, controls | `src/mat/xr/MatExperience.ts` |
+| In the headset scene (mixed reality only), session start, auto-restore | `src/mat/MaterialMat.tsx` (used by `src/components/XRScene.tsx`) |
+| Kit list / errors on the headset page; extra AR features and `?test` | `src/mat/KitSummary.tsx`, `src/components/XRView.tsx` |
+| Per frame: drawing → table height → fit → anchor, controls | `src/mat/xr/MatSystem.ts` |
 | Hand joints, pen, palm normal | `src/mat/xr/hands.ts` |
 | Pinch hysteresis, stroke buffer, rectangle fit, table choice, layout, poke, palm-up | `src/mat/lib/*.ts` (unit tested) |
 | Kit loading and checking | `src/mat/lib/kit.ts` |
@@ -195,8 +199,8 @@ reuses preallocated objects throughout.
 Limits: with no Space Setup there are no planes, and hit test may find
 nothing, so the table height comes from your pinch (within about a
 centimetre). Anchors and persistent anchors depend on the browser; without
-them the mat still appears but can drift slightly, and **Restore last mat**
-isn't offered. Labels turn to face you, so from a low angle a label can
+them the mat still appears but can drift slightly, and isn't restored next
+time. Labels turn to face you, so from a low angle a label can
 overlap the outline behind it a little.
 
 ## How it works

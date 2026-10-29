@@ -2,6 +2,9 @@ import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { createHandPose, type HandPose } from '../lib/handPose';
+import type { Kit } from '../mat/lib/kit';
+import { MaterialMat } from '../mat/MaterialMat';
+import type { MatSystem } from '../mat/xr/MatSystem';
 import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
 import type { HandStatus } from './Hud';
 import { PalmInjury } from './PalmInjury';
@@ -20,6 +23,9 @@ interface XRSceneProps {
   woundOpacity: RefObject<number>;
   /** Called when the in-headset slider changes the opacity. */
   onWoundOpacityChange: (value: number) => void;
+  /** The material mat's kit (mixed reality only), or null if it didn't load. */
+  kit: Kit | null;
+  onMatSystem?: (system: MatSystem | null) => void;
 }
 
 /**
@@ -34,6 +40,8 @@ export const XRScene = memo(function XRScene({
   onHandStatus,
   woundOpacity,
   onWoundOpacityChange,
+  kit,
+  onMatSystem,
 }: XRSceneProps) {
   const pose = useRef<HandPose>(createHandPose());
   const isVR = mode !== 'ar';
@@ -55,6 +63,7 @@ export const XRScene = memo(function XRScene({
       <HintPanel pose={pose} active={mode !== null} />
       <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} />
       <StatusReporter pose={pose} onHandStatus={onHandStatus} />
+      <MaterialMat active={mode === 'ar'} kit={kit} onSystem={onMatSystem} />
     </Canvas>
   );
 });
