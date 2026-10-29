@@ -66,6 +66,8 @@ export interface Kit {
 export type KitResult = { ok: true; kit: Kit } | { ok: false; errors: string[] };
 
 const CM = 0.01;
+/** Most items the mat can draw (its per-slot shader array). */
+export const MAX_ITEMS = 64;
 /** Anything bigger than this (cm) is surely a typo. */
 const MAX_SIZE_CM = 200;
 /** Volume of one drop if not given (ml). */
@@ -89,6 +91,7 @@ export function parseKit(json: unknown): KitResult {
     errors.push('"items" must be a non-empty list.');
     return { ok: false, errors };
   }
+  if (json.items.length > MAX_ITEMS) errors.push(`"items" can hold at most ${MAX_ITEMS} items.`);
 
   const items: KitItem[] = [];
   const ids = new Set<string>();

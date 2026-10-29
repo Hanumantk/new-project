@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Text } from 'troika-three-text';
-import { COLORS, makeText, setTextContent, setTextOpacity } from './text';
+import { COLORS, hex, makeText, setTextContent, setTextOpacity } from './text';
 
 /** How far in front of the eyes, and how far below them, the hint floats. */
 const DISTANCE = 0.62;
@@ -45,7 +45,7 @@ export class HintBoard {
   show(title: string, detail = '', seconds = Infinity, tone: 'normal' | 'warn' = 'normal') {
     setTextContent(this.title, title);
     setTextContent(this.detail, detail);
-    this.title.color = tone === 'warn' ? COLORS.warn : COLORS.label;
+    this.title.color = hex(tone === 'warn' ? COLORS.warn : COLORS.label);
     this.targetOpacity = 1;
     this.remaining = seconds;
   }

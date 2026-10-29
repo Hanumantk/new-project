@@ -1,3 +1,4 @@
+import { Color } from 'three';
 import { Text } from 'troika-three-text';
 
 const fontUrl = (file: string) => new URL(`material-mat/fonts/${file}`, document.baseURI).href;
@@ -18,6 +19,12 @@ export const COLORS = {
   ink: '#0e1512',
   warn: '#ffc7a8',
 };
+
+/**
+ * A colour as a number for text: troika re-reads text colours every frame,
+ * and a number avoids parsing a CSS string each time.
+ */
+export const hex = (color: string) => new Color(color).getHex();
 
 /** Opacity of the soft dark halo behind text. */
 const HALO_OPACITY = 0.62;
@@ -41,14 +48,14 @@ export function makeText(content: string, style: TextStyle): Text {
   text.text = content;
   text.font = style.weight === 'bold' ? FONTS.bold : FONTS.medium;
   text.fontSize = style.size;
-  text.color = style.color ?? COLORS.label;
+  text.color = hex(style.color ?? COLORS.label);
   text.anchorX = style.anchorX ?? 'left';
   text.anchorY = style.anchorY ?? 'middle';
   text.textAlign = style.align ?? style.anchorX ?? 'left';
   text.lineHeight = 1.18;
   if (style.maxWidth) text.maxWidth = style.maxWidth;
   if (style.halo !== false) {
-    text.outlineColor = COLORS.ink;
+    text.outlineColor = hex(COLORS.ink);
     text.outlineWidth = '14%';
     text.outlineBlur = '45%';
     text.outlineOpacity = HALO_OPACITY;

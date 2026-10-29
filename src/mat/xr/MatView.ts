@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { BatchedText } from 'troika-three-text';
 import type { Kit } from '../lib/kit';
 import { layoutKit } from '../lib/layout';
 import { cornerTicks, rectPath, ribbonGeometry } from './outlines';
-import { SlotView } from './SlotView';
+import { BadgeBatch, FootprintBatch } from './slotBatches';
+import { BADGE_RADIUS, SlotView } from './SlotView';
 import { COLORS } from './text';
 
 /** Lift above the table so lines don't flicker against virtual fills. */
@@ -10,10 +12,14 @@ const LINE_LIFT = 0.0015;
 /** Strength of the other slots in step mode. */
 const STEP_DIM = 0.2;
 
+const matInverse = new THREE.Matrix4();
+const badgeMatrix = new THREE.Matrix4();
+
 /**
  * The mat: a frame on the table (origin at the rectangle's centre, +Y up,
  * +Z towards the user, +X to their right), positioned from its anchor, with
- * the kit laid out on it.
+ * the kit laid out on it. All slots draw through shared batches (outlines,
+ * badges, text), so the whole mat is about a dozen draw calls.
  */
 export class MatView {
   /** Placed in world space from the anchor every frame. */
@@ -25,6 +31,9 @@ export class MatView {
   pages = 1;
   page = 0;
   private slots: SlotView[] = [];
+  private readonly footprints = new FootprintBatch();
+  private badges: BadgeBatch | null = null;
+  private labels: BatchedText | null = null;
   private outline: THREE.Mesh | null = null;
   private ticks: THREE.Mesh | null = null;
   private readonly outlineMaterial = new THREE.MeshBasicMaterial({
@@ -48,6 +57,7 @@ export class MatView {
     this.root.matrixAutoUpdate = false;
     this.root.visible = false;
     this.root.add(this.overlay);
+    this.overlay.add(this.footprints.mesh);
   }
 
   get itemCount() {
@@ -62,11 +72,26 @@ export class MatView {
   /** Creates the slots for a kit (once per session). */
   setKit(kit: Kit) {
     for (const slot of this.slots) {
-      this.overlay.remove(slot.group);
+      this.overlay.remove(slot.visual, slot.label);
       slot.dispose();
     }
+    if (this.badges) {
+      this.overlay.remove(this.badges.mesh);
+      this.badges.dispose();
+    }
+    if (this.labels) {
+      this.overlay.remove(this.labels);
+      this.labels.dispose();
+    }
     this.slots = kit.items.map((item) => new SlotView(item));
-    for (const slot of this.slots) this.overlay.add(slot.group);
+    this.badges = new BadgeBatch(BADGE_RADIUS, this.slots.length);
+    this.labels = new BatchedText();
+    this.labels.renderOrder = 20;
+    for (const slot of this.slots) {
+      this.overlay.add(slot.visual, slot.label);
+      for (const text of slot.texts) this.labels.addText(text);
+    }
+    this.overlay.add(this.badges.mesh, this.labels);
   }
 
   /** Sizes the mat to width × depth (m) and lays the kit out on it. */
@@ -89,6 +114,7 @@ export class MatView {
       depth,
     );
     layout.slots.forEach((slot, i) => this.slots[i].place(slot));
+    this.footprints.build(this.slots.map((s) => ({ shape: s.item.footprint, x: s.footprintX, z: s.footprintZ })));
     this.pages = layout.pages;
     this.activeStep = -1;
     this.setPage(0);
@@ -134,22 +160,30 @@ export class MatView {
 
   /** Per frame: labels face the user; the active step pulses. */
   update(head: THREE.Vector3, time: number) {
-    if (!this.root.visible || !this.overlay.visible) return;
+    if (!this.root.visible || !this.overlay.visible || !this.badges) return;
     this.root.updateMatrixWorld(true);
-    for (const slot of this.slots) {
-      if (!slot.group.visible) continue;
-      slot.faceTowards(head);
-      slot.pulse(time);
+    matInverse.copy(this.overlay.matrixWorld).invert();
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      if (slot.alpha <= 0.002) continue;
+      slot.faceTowards(head, matInverse, badgeMatrix);
+      this.badges.setMatrix(i, badgeMatrix);
     }
+    this.footprints.setTime(time);
   }
 
   private applySlots() {
+    // Runs every frame while the opacity eases: a plain loop, no closures.
     const stepping = this.activeStep >= 0;
-    this.slots.forEach((slot, i) => {
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
       const onPage = slot.page === this.page;
       const active = stepping && i === this.activeStep;
-      slot.setActive(active, active);
-      slot.setAlpha(onPage ? this.opacity * (stepping && !active ? STEP_DIM : 1) : 0);
-    });
+      const alpha = onPage ? this.opacity * (stepping && !active ? STEP_DIM : 1) : 0;
+      slot.setState(alpha, active);
+      this.footprints.setAlpha(i, alpha);
+      this.badges?.setAlpha(i, alpha);
+    }
+    this.footprints.setActive(stepping ? this.activeStep : -1);
   }
 }

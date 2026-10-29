@@ -32,6 +32,12 @@ declare module 'troika-three-text' {
     dispose(): void;
   }
 
+  /** Draws any number of member Texts (posed by their own `matrix`, relative to the batch) in one call. */
+  export class BatchedText extends Text {
+    addText(text: Text): void;
+    removeText(text: Text): void;
+  }
+
   export function preloadFont(
     options: { font?: string; characters?: string | string[] },
     callback: () => void,

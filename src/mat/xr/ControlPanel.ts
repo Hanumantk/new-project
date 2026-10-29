@@ -3,7 +3,7 @@ import type { Text } from 'troika-three-text';
 import { pokeSliderValue, type PokeSliderLayout } from '../../lib/pokeSlider';
 import { PokeButton, POKE_HOVER } from '../lib/poke';
 import type { HandState } from './hands';
-import { COLORS, makeText, setTextContent } from './text';
+import { COLORS, hex, makeText, setTextContent } from './text';
 
 /** Panel size (m). */
 const WIDTH = 0.3;
@@ -75,6 +75,8 @@ const inverse = new THREE.Matrix4();
 const MINT = new THREE.Color(COLORS.mint);
 const WARN = new THREE.Color(COLORS.warn);
 const WHITE = new THREE.Color('#ffffff');
+const INK_TEXT = hex(COLORS.ink);
+const LABEL_TEXT = hex(COLORS.label);
 
 /**
  * The mat's controls, floating by its front-right corner and tilted towards
@@ -182,7 +184,8 @@ export class ControlPanel {
       this.actions.onOpacity(this.opacity, true);
     }
 
-    for (const b of this.buttons) {
+    for (let i = 0; i < this.buttons.length; i++) {
+      const b = this.buttons[i];
       const pressed = this.dragging
         ? b.poke.update(null, 0, 0)
         : b.poke.update(finger ? finger.x : null, finger?.y ?? 0, finger?.z ?? 0, b.enabled);
@@ -207,7 +210,8 @@ export class ControlPanel {
     this.group.updateWorldMatrix(true, false);
     inverse.copy(this.group.matrixWorld).invert();
     let best: { x: number; y: number; z: number } | null = null;
-    for (const hand of hands) {
+    for (let i = 0; i < hands.length; i++) {
+      const hand = hands[i];
       // A pinching hand is drawing or holding something, not poking.
       if (!hand.tracked || hand.pinchDistance < 0.03) continue;
       local.copy(hand.indexTip).applyMatrix4(inverse);
@@ -260,7 +264,7 @@ export class ControlPanel {
     }
     if (filled !== b.dark) {
       b.dark = filled;
-      b.label.color = filled ? COLORS.ink : COLORS.label;
+      b.label.color = filled ? INK_TEXT : LABEL_TEXT;
     }
     b.label.fillOpacity = b.enabled ? 1 : 0.35;
   }
