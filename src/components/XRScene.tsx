@@ -1,7 +1,9 @@
 import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { GrabSystem, type GrabState } from '../lib/grab';
 import { createHandPose, type HandPose } from '../lib/handPose';
+import { GrabController } from './GrabController';
 import type { Kit } from '../mat/lib/kit';
 import { MaterialMat } from '../mat/MaterialMat';
 import type { MatSystem } from '../mat/xr/MatSystem';
@@ -44,6 +46,8 @@ export const XRScene = memo(function XRScene({
   onMatSystem,
 }: XRSceneProps) {
   const pose = useRef<HandPose>(createHandPose());
+  // Panels and the material mat can be carried with a fist.
+  const grab = useMemo(() => new GrabSystem(), []);
   const isVR = mode !== 'ar';
 
   return (
@@ -61,9 +65,10 @@ export const XRScene = memo(function XRScene({
       <XRPoseSource pose={pose} showHands={isVR} />
       <PalmInjury pose={pose} occlude={!isVR} strength={woundOpacity} />
       <HintPanel pose={pose} active={mode !== null} />
-      <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} />
+      <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} grab={grab} />
       <StatusReporter pose={pose} onHandStatus={onHandStatus} />
-      <MaterialMat active={mode === 'ar'} kit={kit} onSystem={onMatSystem} />
+      <MaterialMat active={mode === 'ar'} kit={kit} onSystem={onMatSystem} grab={grab} />
+      <GrabController grab={grab} active={mode !== null} />
     </Canvas>
   );
 });
@@ -193,10 +198,12 @@ function HeadsetSlider({
   value,
   active,
   onChange,
+  grab,
 }: {
   value: RefObject<number>;
   active: boolean;
   onChange: (value: number) => void;
+  grab: GrabSystem;
 }) {
   const gl = useThree((s) => s.gl);
   const meshRef = useRef<THREE.Mesh>(null);
@@ -218,8 +225,41 @@ function HeadsetSlider({
       forward: new THREE.Vector3(),
       right: new THREE.Vector3(),
       tip: new THREE.Vector3(),
+      active: false,
+      held: false,
     }),
     [],
+  );
+  scratch.active = active;
+
+  // Carry it with a fist: it follows, turns to face you, and stays where you let go.
+  useEffect(
+    () =>
+      grab.add({
+        bounds: new THREE.Box3(
+          new THREE.Vector3(-HEADSET_SLIDER.width / 2, -HEADSET_SLIDER.height / 2, -0.03),
+          new THREE.Vector3(HEADSET_SLIDER.width / 2, HEADSET_SLIDER.height / 2, 0.03),
+        ),
+        style: 'panel',
+        canGrab: () => scratch.active && scratch.placed && !!meshRef.current?.visible,
+        worldMatrix: (out) => {
+          const mesh = meshRef.current!;
+          mesh.updateWorldMatrix(true, false);
+          out.copy(mesh.matrixWorld);
+        },
+        begin: () => {
+          scratch.held = true;
+        },
+        move: (world) => {
+          const mesh = meshRef.current!;
+          world.decompose(mesh.position, mesh.quaternion, mesh.scale);
+        },
+        end: () => {
+          scratch.held = false;
+        },
+        setGrabState: (state: GrabState) => material.color.copy(GRAB_TINT[state]),
+      }),
+    [grab, material, scratch],
   );
 
   useEffect(
@@ -258,8 +298,8 @@ function HeadsetSlider({
       scratch.placed = true;
     }
 
-    // Either index fingertip pressing the panel sets the value.
-    for (const i of [0, 1]) {
+    // Either index fingertip pressing the panel sets the value (not while it's carried).
+    for (let i = 0; i < 2 && !scratch.held; i++) {
       const tip = gl.xr.getHand(i).joints['index-finger-tip'];
       if (!tip?.visible) continue;
       mesh.worldToLocal(tip.getWorldPosition(scratch.tip));
@@ -287,6 +327,13 @@ function HeadsetSlider({
     </mesh>
   );
 }
+
+/** The slider panel's tint: normal, with a hand on it, and while it's carried. */
+const GRAB_TINT: Record<GrabState, THREE.Color> = {
+  none: new THREE.Color('#ffffff'),
+  hover: new THREE.Color('#d9f5e4'),
+  held: new THREE.Color('#b5ecca'),
+};
 
 function drawSlider(canvas: HTMLCanvasElement, value: number) {
   const ctx = canvas.getContext('2d')!;

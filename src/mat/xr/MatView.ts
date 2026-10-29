@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BatchedText } from 'troika-three-text';
+import type { GrabState } from '../../lib/grab';
 import type { Kit } from '../lib/kit';
 import { layoutKit } from '../lib/layout';
 import { cornerTicks, rectPath, ribbonGeometry } from './outlines';
@@ -13,6 +14,8 @@ const LINE_LIFT = 0.0015;
 const STEP_DIM = 0.2;
 
 const matInverse = new THREE.Matrix4();
+const MINT = new THREE.Color(COLORS.mint);
+const WHITE = new THREE.Color('#ffffff');
 const badgeMatrix = new THREE.Matrix4();
 
 /**
@@ -54,6 +57,7 @@ export class MatView {
   private opacity = 1;
   /** Index of the highlighted item in step mode, or -1. */
   private activeStep = -1;
+  private grabState: GrabState = 'none';
 
   constructor() {
     this.root.matrixAutoUpdate = false;
@@ -155,10 +159,24 @@ export class MatView {
   setOpacity(opacity: number) {
     if (opacity === this.opacity) return;
     this.opacity = opacity;
-    this.outlineMaterial.opacity = 0.55 * opacity;
-    this.tickMaterial.opacity = opacity;
+    this.applyEdge();
     this.overlay.visible = opacity > 0.002;
     this.applySlots();
+  }
+
+  /** Brightens the mat's edge while a hand is on it, white while it's carried. */
+  setGrabState(state: GrabState) {
+    this.grabState = state;
+    this.applyEdge();
+  }
+
+  private applyEdge() {
+    const handled = this.grabState !== 'none';
+    const color = this.grabState === 'held' ? WHITE : MINT;
+    this.outlineMaterial.color.copy(color);
+    this.tickMaterial.color.copy(color);
+    this.outlineMaterial.opacity = (handled ? 1 : 0.55) * this.opacity;
+    this.tickMaterial.opacity = this.opacity;
   }
 
   /** Per frame: labels face the user; the active step pulses. */

@@ -129,6 +129,29 @@ fitted with PCA on the stroke's points, refined to the tightest box near
 those axes so an unclosed or wobbly loop doesn't tilt it, with its front
 edge facing you. Points from your hand arriving or lifting off are ignored.
 
+### Moving things with a fist
+
+Anything in the headset can be moved: the material mat, its control panel
+and the wound-opacity panel.
+
+1. Put your hand **on** it, or **point your hand at it** from up to 2.5 m
+   away. It lights up: the mat's edge brightens, a panel turns mint.
+2. **Make a fist.** After a fifth of a second it's held (the mat's edge
+   turns white), and it follows your fist.
+3. **Open your hand** and it stays where it is.
+
+The mat slides and turns with your fist but stays flat on the table. If you
+put it down over another detected table, it settles onto that one. It's
+re-anchored where you leave it, so it's still there next time. Panels
+follow your fist in 3D and turn to face you. The mat's panel stays where
+you put it relative to the mat (also remembered), and moves with the mat.
+
+A fist means every finger curled: the farthest of the four fingertips is
+within 0.6 palm-lengths of the middle of the palm. Pointing, pinching and
+fingers wrapped round a real object (about 0.8) don't count, so picking up
+a tube from the mat doesn't drag the mat. A hand must open past 0.85 to let
+go (`src/lib/fist.ts`; grabbing in `src/lib/grab.ts`, unit tested).
+
 ### Editing the kit
 
 The kit is **`public/material-mat/materials.json`**. It's loaded when the

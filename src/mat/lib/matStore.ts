@@ -6,6 +6,8 @@ export interface SavedMat {
   width: number;
   depth: number;
   savedAt: number;
+  /** Where its control panel was moved to: a 4×4 pose relative to the mat. */
+  panel?: number[];
 }
 
 const MAT_KEY = 'material-mat:last';
@@ -22,7 +24,11 @@ export function loadSavedMat(): SavedMat | null {
       value.width > 0 &&
       value.depth > 0
     ) {
-      return { handle: value.handle, width: value.width, depth: value.depth, savedAt: value.savedAt ?? 0 };
+      const panel =
+        Array.isArray(value.panel) && value.panel.length === 16 && value.panel.every(Number.isFinite)
+          ? value.panel
+          : undefined;
+      return { handle: value.handle, width: value.width, depth: value.depth, savedAt: value.savedAt ?? 0, panel };
     }
   } catch {
     // Storage blocked or bad JSON: nothing to restore.
