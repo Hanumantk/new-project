@@ -1,16 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { HandLandmarker } from '@mediapipe/tasks-vision';
 import { createHandLandmarker, type Delegate } from '../lib/handLandmarker';
 import { computeCover, createCoverRect } from '../lib/coverMapping';
 import { drawLandmarks } from '../lib/drawLandmarks';
 import { CLOSED_HAND_SCORE, OPEN_HAND_SCORE } from '../lib/handPose';
+import { LandmarkFilter } from '../lib/oneEuroFilter';
+import { SkinSampler } from '../lib/skinSampler';
 import { createTrackingState, handOpenness, type TrackingState } from '../lib/tracking';
 import { ARScene } from './ARScene';
-import { Hud, type HandStatus } from './Hud';
+import { Hud, type HandStatus, type HudStats } from './Hud';
 
 /** Frames a new handedness label must persist before we believe it. */
 const HANDEDNESS_HYSTERESIS = 5;
-const FPS_UPDATE_MS = 500;
+const STATS_UPDATE_MS = 500;
+/** Sample the skin's colour every this many frames. */
+const SKIN_SAMPLE_EVERY = 3;
 
 const UNSUPPORTED_MESSAGE =
   'This browser can’t access a camera here. Open the page over HTTPS (or localhost) in a recent Chrome, Edge, Firefox or Safari.';
@@ -20,30 +24,37 @@ type Phase = 'camera' | 'model' | 'running';
 interface ARViewProps {
   onError: (message: string) => void;
   onStop: () => void;
+  /**
+   * Play this (same-origin) video file in a loop instead of using the
+   * webcam, for testing without a camera (`?video=<path>`).
+   */
+  sampleVideo?: string | null;
 }
 
-export function ARView({ onError, onStop }: ARViewProps) {
+export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   const trackingRef = useRef<TrackingState>(createTrackingState());
-  const showLandmarksRef = useRef(false);
+  const debugRef = useRef(false);
+  const invalidateRef = useRef<(() => void) | null>(null);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
   const [phase, setPhase] = useState<Phase>('camera');
   const [handStatus, setHandStatus] = useState<HandStatus>('none');
-  const [fps, setFps] = useState(0);
+  const [stats, setStats] = useState<HudStats | null>(null);
   const [delegate, setDelegate] = useState<Delegate | null>(null);
-  const [showLandmarks, setShowLandmarks] = useState(false);
+  const [debug, setDebug] = useState(false);
 
   useEffect(() => {
-    showLandmarksRef.current = showLandmarks;
-    if (!showLandmarks) {
+    debugRef.current = debug;
+    invalidateRef.current?.();
+    if (!debug) {
       const canvas = debugCanvasRef.current;
       canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     }
-  }, [showLandmarks]);
+  }, [debug]);
 
   useEffect(() => {
     const video = videoRef.current!;
@@ -51,10 +62,19 @@ export function ARView({ onError, onStop }: ARViewProps) {
     const debugCanvas = debugCanvasRef.current!;
     const debugCtx = debugCanvas.getContext('2d')!;
     const tracking = trackingRef.current;
-    tracking.video = video;
+
+    // Each camera frame is copied here once; detection and the scene's
+    // background both use this copy, so they always agree on the frame.
+    const capture = document.createElement('canvas');
+    const captureCtx = capture.getContext('2d', { alpha: false })!;
+    tracking.frame = capture;
+    const landmarkFilter = new LandmarkFilter();
+    const skinSampler = new SkinSampler();
 
     let cancelled = false;
     let rafId = 0;
+    let videoFrameHandle = 0;
+    let watchdog = 0;
     let stream: MediaStream | null = null;
     let landmarker: HandLandmarker | null = null;
 
@@ -78,24 +98,33 @@ export function ARView({ onError, onStop }: ARViewProps) {
     let handPresent = false;
     let status: HandStatus = 'none';
     let handednessVotes = 0;
-    let fpsFrames = 0;
-    let fpsWindowStart = performance.now();
+    let detectTotal = 0;
+    let detectCount = 0;
     let debugDirty = false;
+    let videoFramesSeen = 0;
 
-    const tick = () => {
-      rafId = requestAnimationFrame(tick);
-      if (!landmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-      // Only run inference when the camera has delivered a new frame.
-      if (video.currentTime === lastVideoTime) return;
-      lastVideoTime = video.currentTime;
+    /** Captures the current video frame, detects on it and requests one render. */
+    const processFrame = (now: number) => {
+      if (!landmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+        return;
+      }
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (capture.width !== width || capture.height !== height) {
+        capture.width = width;
+        capture.height = height;
+      }
+      captureCtx.drawImage(video, 0, 0, width, height);
 
-      const now = performance.now();
       const timestamp = Math.max(now, lastTimestamp + 1); // must strictly increase
       lastTimestamp = timestamp;
-      const result = landmarker.detectForVideo(video, timestamp);
+      const detectStart = performance.now();
+      const result = landmarker.detectForVideo(capture, timestamp);
+      detectTotal += performance.now() - detectStart;
+      detectCount++;
 
-      const landmarks = result.landmarks[0] ?? null;
-      if (landmarks) {
+      const raw = result.landmarks[0] ?? null;
+      if (raw) {
         // We feed raw (unmirrored) camera frames; for those the label matches
         // the user's actual hand (verified against a known right-hand photo).
         const isRightHand = result.handedness[0]?.[0]?.categoryName === 'Right';
@@ -106,13 +135,17 @@ export function ARView({ onError, onStop }: ARViewProps) {
           if (++handednessVotes >= HANDEDNESS_HYSTERESIS) {
             tracking.isRightHand = isRightHand;
             handednessVotes = 0;
+            landmarkFilter.reset(); // a different hand: don't blend between them
           }
         } else {
           handednessVotes = 0;
         }
+      } else {
+        landmarkFilter.reset();
       }
+      const landmarks = raw ? landmarkFilter.filter(raw, timestamp / 1000, width, height) : null;
       if (landmarks) {
-        const openness = handOpenness(landmarks, video.videoWidth, video.videoHeight);
+        const openness = handOpenness(landmarks, width, height);
         tracking.handOpen = openness > (tracking.handOpen ? CLOSED_HAND_SCORE : OPEN_HAND_SCORE);
       } else {
         tracking.handOpen = false;
@@ -121,17 +154,26 @@ export function ARView({ onError, onStop }: ARViewProps) {
       tracking.frameId++;
       handPresent = landmarks !== null;
 
+      // Light matching: read the skin around the wound every few frames
+      // (lighting changes slowly; the reading is smoothed anyway).
+      if (landmarks && tracking.frameId % SKIN_SAMPLE_EVERY === 0) {
+        skinSampler.update(video, width, height, landmarks, tracking.skin);
+      }
+
+      // Draw this frame (background + wound) together, once.
+      invalidateRef.current?.();
+
       const nextStatus: HandStatus = !handPresent ? 'none' : tracking.handOpen ? 'open' : 'closed';
       if (nextStatus !== status) {
         status = nextStatus;
         setHandStatus(nextStatus);
       }
 
-      if (showLandmarksRef.current && view.width > 0 && video.videoWidth) {
+      if (debugRef.current && view.width > 0) {
         debugCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
         debugCtx.clearRect(0, 0, view.width, view.height);
         if (landmarks) {
-          computeCover(cover, view.width, view.height, video.videoWidth, video.videoHeight);
+          computeCover(cover, view.width, view.height, width, height);
           drawLandmarks(debugCtx, landmarks, cover);
         }
         debugDirty = true;
@@ -140,35 +182,97 @@ export function ARView({ onError, onStop }: ARViewProps) {
         debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
         debugDirty = false;
       }
+    };
 
-      fpsFrames++;
-      const elapsed = now - fpsWindowStart;
-      if (elapsed >= FPS_UPDATE_MS) {
-        setFps(Math.round((fpsFrames * 1000) / elapsed));
-        fpsFrames = 0;
-        fpsWindowStart = now;
+    // HUD numbers: average detection time and render rate over the last window.
+    let statsRenders = tracking.rendered.renders;
+    let statsAt = performance.now();
+    const statsTimer = window.setInterval(() => {
+      const at = performance.now();
+      const renders = tracking.rendered.renders;
+      const { poseFrameId, backgroundFrameId, mismatches } = tracking.rendered;
+      setStats({
+        renderFps: ((renders - statsRenders) * 1000) / (at - statsAt),
+        detectMs: detectCount ? detectTotal / detectCount : null,
+        frameId: tracking.frameId,
+        poseFrameId,
+        backgroundFrameId,
+        mismatches,
+      });
+      statsRenders = renders;
+      statsAt = at;
+      detectTotal = 0;
+      detectCount = 0;
+    }, STATS_UPDATE_MS);
+
+    // Preferred: run exactly once per new video frame, as it is presented.
+    const onVideoFrame: VideoFrameRequestCallback = (now) => {
+      videoFrameHandle = video.requestVideoFrameCallback(onVideoFrame);
+      videoFramesSeen++;
+      processFrame(now);
+    };
+    // Fallback: poll on animation frames and skip repeats.
+    const onAnimationFrame = (now: number) => {
+      rafId = requestAnimationFrame(onAnimationFrame);
+      if (video.currentTime === lastVideoTime) return;
+      lastVideoTime = video.currentTime;
+      processFrame(now);
+    };
+    const startLoop = () => {
+      if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+        videoFrameHandle = video.requestVideoFrameCallback(onVideoFrame);
+        // Some browsers don't deliver frame callbacks for a video that isn't
+        // shown; if none arrive, fall back to animation frames.
+        watchdog = window.setTimeout(() => {
+          if (cancelled || videoFramesSeen > 0) return;
+          console.warn('No video frame callbacks; falling back to requestAnimationFrame.');
+          video.cancelVideoFrameCallback(videoFrameHandle);
+          rafId = requestAnimationFrame(onAnimationFrame);
+        }, 1500);
+      } else {
+        rafId = requestAnimationFrame(onAnimationFrame);
       }
     };
 
-    const start = async () => {
+    const startSampleVideo = async (url: string) => {
+      video.src = url;
+      video.loop = true;
+      try {
+        await video.play();
+      } catch (err) {
+        if (!cancelled) {
+          console.error(err);
+          onErrorRef.current(`Couldn’t play the sample video (${url}).`);
+        }
+        return false;
+      }
+      return !cancelled;
+    };
+
+    const startCamera = async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
         onErrorRef.current(UNSUPPORTED_MESSAGE);
-        return;
+        return false;
       }
 
       let mediaStream: MediaStream;
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 60 },
+            facingMode: 'user',
+          },
           audio: false,
         });
       } catch (err) {
         if (!cancelled) onErrorRef.current(cameraErrorMessage(err));
-        return;
+        return false;
       }
       if (cancelled) {
         stopStream(mediaStream);
-        return;
+        return false;
       }
       stream = mediaStream;
       video.srcObject = mediaStream;
@@ -177,7 +281,12 @@ export function ARView({ onError, onStop }: ARViewProps) {
       } catch {
         // play() rejects if we unmount mid-start; autoplay attribute covers the rest.
       }
-      if (cancelled) return;
+      return !cancelled;
+    };
+
+    const start = async () => {
+      const started = sampleVideo ? await startSampleVideo(sampleVideo) : await startCamera();
+      if (!started) return;
 
       setPhase('model');
       let loaded;
@@ -199,7 +308,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
       landmarker = loaded.landmarker;
       setDelegate(loaded.delegate);
       setPhase('running');
-      rafId = requestAnimationFrame(tick);
+      startLoop();
     };
 
     void start();
@@ -207,35 +316,45 @@ export function ARView({ onError, onStop }: ARViewProps) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
+      window.clearInterval(statsTimer);
+      window.clearTimeout(watchdog);
+      if ('cancelVideoFrameCallback' in video) video.cancelVideoFrameCallback(videoFrameHandle);
       resizeObserver.disconnect();
       landmarker?.close();
       landmarker = null;
       if (stream) stopStream(stream);
       video.srcObject = null;
+      video.removeAttribute('src');
+      video.load();
       tracking.landmarks = null;
       tracking.handOpen = false;
-      tracking.video = null;
+      tracking.frame = null;
     };
+  }, []);
+
+  const onSceneReady = useCallback((invalidate: () => void) => {
+    invalidateRef.current = invalidate;
   }, []);
 
   return (
     <div className="ar-root">
       {/* Everything in the stage is mirrored together, like a selfie camera. */}
       <div className="stage" ref={stageRef}>
-        <video ref={videoRef} className="layer video" autoPlay playsInline muted />
+        {/* Only a frame source: the scene draws the frames it detected on. */}
+        <video ref={videoRef} className="layer video source-video" autoPlay playsInline muted />
         <div className="layer">
-          <ARScene tracking={trackingRef} />
+          <ARScene tracking={trackingRef} onReady={onSceneReady} debug={debug} />
         </div>
         <canvas ref={debugCanvasRef} className="layer debug" />
       </div>
 
       <Hud
         handStatus={handStatus}
-        fps={fps}
+        stats={phase === 'running' ? stats : null}
         delegate={delegate}
-        running={phase === 'running'}
-        showLandmarks={showLandmarks}
-        onToggleLandmarks={() => setShowLandmarks((v) => !v)}
+        source={sampleVideo ? 'Sample video' : null}
+        debug={debug}
+        onToggleDebug={() => setDebug((v) => !v)}
         onStop={onStop}
       />
 

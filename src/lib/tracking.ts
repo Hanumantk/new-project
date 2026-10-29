@@ -1,23 +1,41 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { createSkinSample, type SkinSample } from './skinSampler';
 
 /**
  * Mutable state shared between the detection loop and the 3D scene.
  * It lives in a ref so per-frame updates never trigger React renders.
  */
 export interface TrackingState {
-  video: HTMLVideoElement | null;
-  /** Landmarks of the tracked hand in the latest frame, or null if none. */
+  /**
+   * The camera frame the latest detection ran on, copied out of the video.
+   * The scene draws this same canvas as its background, so the wound pose
+   * and the picture behind it always come from one frame.
+   */
+  frame: HTMLCanvasElement | null;
+  /** Landmarks of the tracked hand in `frame` (One Euro filtered), or null if none. */
   landmarks: NormalizedLandmark[] | null;
   /** The user's actual hand (not MediaPipe's mirrored label). */
   isRightHand: boolean;
   /** True while the hand is open (a closed hand covers the palm). */
   handOpen: boolean;
-  /** Increments every time a new video frame has been processed. */
+  /** Increments every time a new video frame has been captured and processed. */
   frameId: number;
+  /** The real skin around the wound: colour, brightness and camera noise. */
+  skin: SkinSample;
+  /** Which frame the background and the wound pose were last rendered from. */
+  rendered: { backgroundFrameId: number; poseFrameId: number; mismatches: number; renders: number };
 }
 
 export function createTrackingState(): TrackingState {
-  return { video: null, landmarks: null, isRightHand: true, handOpen: false, frameId: 0 };
+  return {
+    frame: null,
+    landmarks: null,
+    isRightHand: true,
+    handOpen: false,
+    frameId: 0,
+    skin: createSkinSample(),
+    rendered: { backgroundFrameId: -1, poseFrameId: -1, mismatches: 0, renders: 0 },
+  };
 }
 
 /** Indices of the landmarks we use. */

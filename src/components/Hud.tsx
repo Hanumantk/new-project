@@ -9,25 +9,31 @@ const STATUS_LABEL: Record<HandStatus, string> = {
   open: 'Hand detected',
 };
 
+export interface HudStats {
+  /** Frames drawn per second (one per detected camera frame). */
+  renderFps: number;
+  /** Mean detectForVideo time over the last window, in ms. */
+  detectMs: number | null;
+  /** Latest captured camera frame, and the frames last drawn as pose / background. */
+  frameId: number;
+  poseFrameId: number;
+  backgroundFrameId: number;
+  /** Renders where the pose and the background came from different frames. */
+  mismatches: number;
+}
+
 interface HudProps {
   handStatus: HandStatus;
-  fps: number;
+  stats: HudStats | null;
   delegate: Delegate | null;
-  running: boolean;
-  showLandmarks: boolean;
-  onToggleLandmarks: () => void;
+  /** Shown instead of the camera, e.g. "Sample video". */
+  source: string | null;
+  debug: boolean;
+  onToggleDebug: () => void;
   onStop: () => void;
 }
 
-export function Hud({
-  handStatus,
-  fps,
-  delegate,
-  running,
-  showLandmarks,
-  onToggleLandmarks,
-  onStop,
-}: HudProps) {
+export function Hud({ handStatus, stats, delegate, source, debug, onToggleDebug, onStop }: HudProps) {
   return (
     <div className="hud">
       <div className="panel hud-status">
@@ -36,21 +42,34 @@ export function Hud({
           {STATUS_LABEL[handStatus]}
         </span>
         <span className="fps" title={delegate ? `Inference on ${delegate}` : undefined}>
-          <strong>{running ? fps : '–'}</strong> FPS
+          <strong>{stats ? Math.round(stats.renderFps) : '–'}</strong> FPS
+          <span className="hud-sep" aria-hidden>·</span>
+          <strong>{stats?.detectMs != null ? stats.detectMs.toFixed(1) : '–'}</strong> ms detect
           {delegate && <span className="delegate">{delegate}</span>}
         </span>
       </div>
+      {debug && stats && (
+        <div className="panel hud-debug" aria-label="Frame sync">
+          <span>
+            frame <strong>{stats.frameId}</strong>
+          </span>
+          <span>
+            pose <strong>{stats.poseFrameId}</strong>
+          </span>
+          <span>
+            background <strong>{stats.backgroundFrameId}</strong>
+          </span>
+          <span className={stats.mismatches ? 'hud-bad' : 'hud-good'}>
+            {stats.mismatches ? `${stats.mismatches} out of sync` : 'in sync'}
+          </span>
+        </div>
+      )}
       <div className="hud-actions">
-        <button
-          type="button"
-          className="panel button"
-          aria-pressed={showLandmarks}
-          onClick={onToggleLandmarks}
-        >
-          {showLandmarks ? 'Hide landmarks' : 'Show landmarks'}
+        <button type="button" className="panel button" aria-pressed={debug} onClick={onToggleDebug}>
+          Debug
         </button>
         <button type="button" className="panel button button--quiet" onClick={onStop}>
-          Stop camera
+          {source ? `Stop ${source.toLowerCase()}` : 'Stop camera'}
         </button>
       </div>
     </div>

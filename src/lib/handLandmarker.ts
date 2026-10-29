@@ -4,6 +4,9 @@ const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wa
 const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
+/** Detection, presence and tracking confidence thresholds (MediaPipe defaults to 0.5). */
+const MIN_CONFIDENCE = 0.6;
+
 export type Delegate = 'GPU' | 'CPU';
 
 export interface LoadedHandLandmarker {
@@ -20,6 +23,9 @@ export async function createHandLandmarker(): Promise<LoadedHandLandmarker> {
       baseOptions: { modelAssetPath: MODEL_URL, delegate },
       runningMode: 'VIDEO',
       numHands: 1,
+      minHandDetectionConfidence: MIN_CONFIDENCE,
+      minHandPresenceConfidence: MIN_CONFIDENCE,
+      minTrackingConfidence: MIN_CONFIDENCE,
     });
 
   try {

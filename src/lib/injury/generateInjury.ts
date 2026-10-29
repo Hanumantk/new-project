@@ -1,7 +1,7 @@
 /**
  * Procedural maps for a fresh palm laceration: a curved gash with a smaller
  * branching cut, raw flesh walls with blood pooled at the bottom, swollen
- * torn edges, blood oozing out on the wrist side with drips and splatter, a
+ * torn edges, blood oozing out just below the cut with short drips, a
  * scrape with pinpoint bleeding, and bruising / inflammation around it.
  *
  * Pure maths on typed arrays (no three.js, no DOM) so it can run in a worker.
@@ -22,7 +22,7 @@ export interface InjuryMaps {
   wound: Uint8Array;
   /** Tangent-space normals. */
   normal: Uint8Array;
-  /** R: height (displacement), G: roughness. */
+  /** R: height (displacement), G: roughness, B: wet-blood mask, A: skin mask. */
   surface: Uint8Array;
 }
 
@@ -40,14 +40,15 @@ const FLESH_EDGE: RGB = [200, 78, 74];
 const FLESH_MID: RGB = [142, 24, 30];
 const FLESH_DEEP: RGB = [58, 6, 10];
 const FAT: RGB = [214, 182, 118];
-const BLOOD_THICK: RGB = [112, 5, 11];
+const BLOOD_THICK: RGB = [126, 8, 14];
 const BLOOD_THIN: RGB = [168, 18, 24];
-const BLOOD_POOL: RGB = [86, 3, 8];
+const BLOOD_POOL: RGB = [100, 5, 10];
 const MARGIN_PALE: RGB = [222, 150, 136];
 const MARGIN_RAW: RGB = [184, 96, 90];
 const BRUISE_INNER: RGB = [84, 30, 72];
 const BRUISE_OUTER: RGB = [132, 120, 60];
 const INFLAMED: RGB = [188, 72, 70];
+const CONTACT_SHADOW: RGB = [74, 44, 46];
 
 // ---------------------------------------------------------------- noise ---
 
@@ -205,20 +206,26 @@ export function generateInjury(size = 1024): InjuryMaps {
   const branchCut = arcThrough(branchStart[0], branchStart[1], branchStart[0] + 4, branchStart[1] - 11, 1.6);
   const BRANCH_GAPE = 0.8;
 
+  // Blood stays in and just below the cut: short beads rather than long
+  // streaks, and a few droplets within a few millimetres of it.
   const drips: Drip[] = [
-    [0.3, 8, 0.6, 0.4],
-    [0.55, 14, 0.75, 1.7],
-    [0.78, 6, 0.5, 2.9],
+    [0.3, 3, 0.55, 0.4],
+    [0.55, 4.5, 0.65, 1.7],
+    [0.78, 2.5, 0.5, 2.9],
   ].map(([t, length, width, phase]) => {
     const [x, y] = arcPoint(mainCut, t);
     return { x0: x, y0: y + halfWidth(t, MAIN_GAPE, 3) + 0.6, length, width, phase };
   });
 
-  const splatters = Array.from({ length: 9 }, (_, i) => ({
-    x: (hash(i, 17) - 0.45) * 40,
-    y: (hash(i, 29) - 0.2) * 30,
-    r: 0.2 + hash(i, 41) * 0.5,
-  }));
+  const splatters = Array.from({ length: 6 }, (_, i) => {
+    const t = 0.18 + 0.13 * i + (hash(i, 7) - 0.5) * 0.06;
+    const [x, y] = arcPoint(mainCut, t);
+    return {
+      x: x + (hash(i, 17) - 0.5) * 2,
+      y: y + halfWidth(t, MAIN_GAPE, 3) + 2.5 + hash(i, 29) * 2.5,
+      r: 0.18 + hash(i, 41) * 0.3,
+    };
+  });
 
   const cutAngle = Math.atan2(9 + 13, 19 + 20);
   const scrape = { x: -24, y: -19, rx: 8, ry: 4.5 };
@@ -241,8 +248,10 @@ export function generateInjury(size = 1024): InjuryMaps {
       const i = row * size + col;
       tintPx.fill(0);
       woundPx.fill(0);
-      let roughness = 0.55;
+      let roughness = 0.6; // matte, skin-like unless wet
       let height = 0;
+      let skin = 0; // how much of the wound pixel is (torn, scraped) skin
+      let wet = 0; // how much is wet blood
 
       // --- cuts: signed distance to the nearest wound edge (negative inside)
       arcDistance(X, Y, mainCut);
@@ -271,7 +280,8 @@ export function generateInjury(size = 1024): InjuryMaps {
       for (const drip of drips) blood = Math.min(blood, dripDistance(X, Y, drip));
       for (const s of splatters) blood = Math.min(blood, Math.hypot(X - s.x, Y - s.y) - s.r);
       if (blood < 1) blood += (fbm(X * 1.4, Y * 1.4 + 90, 2) - 0.5) * 0.3;
-      const bloodCover = smoothstep(0.1, -0.1, blood);
+      // Soft outer edge (~0.5 mm) so the blood never reads as a cut-out.
+      const bloodCover = smoothstep(0.25, -0.25, blood);
 
       // --- tint (unlit): bruise, then inflammation
       const bAlong = (X - bruise.x) * ca + (Y - bruise.y) * sa;
@@ -298,11 +308,18 @@ export function generateInjury(size = 1024): InjuryMaps {
         over(tintPx, INFLAMED, clamp01(0.22 * redness + 0.2 * scrapeMask));
       }
 
+      // Soft contact shadow along the lower (wrist-side) edge of the swollen rim.
+      if (nearCut && cutEdge > 0) {
+        const band = Math.exp(-(((cutEdge - 2.4) / 1.5) ** 2)) * smoothstep(-0.5, 2, towardsWrist);
+        over(tintPx, CONTACT_SHADOW, 0.25 * band);
+      }
+
       if (scrapeMask > 0) {
         const streak = valueNoise(sAlong * 0.12 + 3, sAcross * 2.6);
         const amount = scrapeMask * smoothstep(0.5, 0.78, streak);
         const s2 = fbm(X * 2 + 13, Y * 2, 2);
         over(woundPx, [mix(200, 158, s2), mix(84, 30, s2), mix(76, 36, s2)], 0.6 * amount);
+        skin = Math.max(skin, 0.6 * amount);
         const cell = 0.6;
         const cx = Math.floor(X / cell);
         const cy = Math.floor(Y / cell);
@@ -310,7 +327,7 @@ export function generateInjury(size = 1024): InjuryMaps {
           const dot = smoothstep(0.22, 0.08, Math.hypot(X - (cx + 0.5) * cell, Y - (cy + 0.5) * cell));
           over(woundPx, [150, 18, 24], 0.85 * dot);
         }
-        roughness = mix(roughness, 0.35, amount);
+        roughness = mix(roughness, 0.5, amount);
         height -= 0.05 * amount;
       }
 
@@ -320,7 +337,8 @@ export function generateInjury(size = 1024): InjuryMaps {
           height += 0.75 * Math.exp(-Math.max(cutEdge, 0) / 3.2) * (0.75 + 0.5 * fbm(X * 0.6, Y * 0.6 + 21, 2));
           const margin = smoothstep(0.9, 0.2, cutEdge);
           over(woundPx, mixRGB(rgb, MARGIN_PALE, MARGIN_RAW, fbm(X * 3.1 + 7, Y * 3.1, 2)), 0.55 * margin);
-          roughness = mix(roughness, 0.45, margin);
+          skin = Math.max(skin, margin);
+          roughness = mix(roughness, 0.6, margin);
         }
 
         // The gash: raw flesh walls falling away to dark tissue, blood pooled at the bottom.
@@ -330,14 +348,17 @@ export function generateInjury(size = 1024): InjuryMaps {
           else mixRGB(rgb, FLESH_MID, FLESH_DEEP, smoothstep(0.45, 0.95, depthQ));
           const fat = depthQ > 0.1 && depthQ < 0.4 ? 0.4 * smoothstep(0.74, 0.82, fbm(X * 2.2 + 51, Y * 2.2, 2)) : 0;
           for (let c = 0; c < 3; c++) rgb[c] = mix(rgb[c] * tissue, FAT[c], fat);
-          over(woundPx, rgb, smoothstep(0.15, -0.15, cutEdge));
+          const open = smoothstep(0.15, -0.15, cutEdge);
+          over(woundPx, rgb, open);
+          skin *= 1 - open;
           if (cutEdge < 0) {
             height = 0.75 * (1 - smoothstep(0, 0.35, depthQ)) - 1.05 * smoothstep(0.2, 1, depthQ);
-            roughness = 0.18;
+            roughness = 0.42; // moist tissue, but not a mirror
             const pool = smoothstep(0.5, 0.75, depthQ + (fbm(X * 0.8 + 9, Y * 0.8, 2) - 0.5) * 0.5);
-            over(woundPx, BLOOD_POOL, 0.9 * pool);
+            over(woundPx, BLOOD_POOL, 0.95 * pool);
             height = mix(height, -0.55, pool);
-            roughness = mix(roughness, 0.05, pool);
+            roughness = mix(roughness, 0.15, pool);
+            wet = Math.max(wet, pool);
           }
         }
       }
@@ -348,9 +369,12 @@ export function generateInjury(size = 1024): InjuryMaps {
         const v = 0.9 + 0.2 * fbm(X * 0.9 + 77, Y * 0.9, 2);
         mixRGB(rgb, BLOOD_THIN, BLOOD_THICK, smoothstep(0, 0.7, thick));
         for (let c = 0; c < 3; c++) rgb[c] *= v;
-        over(woundPx, rgb, bloodCover * mix(0.6, 0.95, smoothstep(0, 0.5, thick)));
+        // Opaque wet blood; only its soft outer edge lets the skin through.
+        over(woundPx, rgb, bloodCover * mix(0.85, 0.98, smoothstep(0, 0.5, thick)));
         height += 0.3 * Math.sqrt(thick) * bloodCover;
-        roughness = mix(roughness, 0.07, bloodCover);
+        roughness = mix(roughness, 0.15, bloodCover);
+        wet = Math.max(wet, bloodCover);
+        skin *= 1 - bloodCover;
       }
 
       if (tintPx[3] === 0) tintPx.set(TINT_FALLBACK);
@@ -365,7 +389,8 @@ export function generateInjury(size = 1024): InjuryMaps {
       heights[i] = height;
       surface[o] = Math.round(clamp01((height - HEIGHT_MIN_MM) / HEIGHT_RANGE_MM) * 255);
       surface[o + 1] = Math.round(clamp01(roughness) * 255);
-      surface[o + 3] = 255;
+      surface[o + 2] = Math.round(clamp01(wet) * 255);
+      surface[o + 3] = Math.round(clamp01(skin) * 255);
     }
   }
 

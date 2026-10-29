@@ -54,7 +54,11 @@ export class HandOccluder {
   private readonly scale = new THREE.Vector3();
   private readonly matrix = new THREE.Matrix4();
 
-  constructor() {
+  /**
+   * @param options.palmPlate  Include the flat palm plate. Off when the caller
+   *   provides its own palm surface (e.g. one that follows a curved palm).
+   */
+  constructor({ palmPlate = true }: { palmPlate?: boolean } = {}) {
     this.bones = new THREE.InstancedMesh(this.boneGeometry, this.material, FINGER_BONES.length);
     this.joints = new THREE.InstancedMesh(this.jointGeometry, this.material, FINGER_JOINTS.length);
 
@@ -65,6 +69,7 @@ export class HandOccluder {
     this.palmGeometry.setIndex(fan);
     this.palmGeometry.setAttribute('position', new THREE.BufferAttribute(this.palmPositions, 3));
     this.palm = new THREE.Mesh(this.palmGeometry, this.material);
+    this.palm.visible = palmPlate;
 
     for (const mesh of [this.bones, this.joints, this.palm]) {
       mesh.frustumCulled = false; // bounds change every frame
@@ -106,6 +111,8 @@ export class HandOccluder {
       this.joints.setMatrixAt(i, this.matrix.compose(this.shifted[joint], this.quaternion, this.scale));
     });
     this.joints.instanceMatrix.needsUpdate = true;
+
+    if (!this.palm.visible) return;
 
     // Palm: outline flattened onto the palm plane, then moved just behind it.
     const backoff = PALM_BACKOFF * handScale;
