@@ -1,0 +1,114 @@
+{
+  "$schema": "./materials.schema.json",
+  "title": "5 cm scar-wax cut on the palm",
+  "items": [
+    {
+      "id": "alcohol",
+      "step": 1,
+      "name": "Isopropyl alcohol 99% + cotton pad",
+      "purpose": "Clean the palm",
+      "quantity": "1 pad, lightly wet",
+      "footprint": { "shape": "rect", "width": 12, "depth": 7 }
+    },
+    {
+      "id": "spirit-gum",
+      "step": 2,
+      "name": "Spirit gum",
+      "purpose": "Adhesive",
+      "quantity": "Thin line, slightly wider than the cut",
+      "footprint": { "shape": "circle", "diameter": 4 }
+    },
+    {
+      "id": "cotton",
+      "step": 3,
+      "name": "Cotton fibres (optional)",
+      "purpose": "Anchor the wax",
+      "quantity": "A small pinch",
+      "footprint": { "shape": "circle", "diameter": 5 }
+    },
+    {
+      "id": "wax",
+      "step": 4,
+      "name": "Nose & scar wax",
+      "purpose": "Build the cut",
+      "quantity": "Marble-sized ball (~2–3 g)",
+      "footprint": { "shape": "circle", "diameter": 6 },
+      "quantityVisual": { "type": "sphere", "diameter": 1.6, "color": "#e8c8ad" }
+    },
+    {
+      "id": "vaseline",
+      "step": 5,
+      "name": "Vaseline",
+      "purpose": "Keep wax off fingers and tools",
+      "quantity": "A fingertip dab",
+      "footprint": { "shape": "circle", "diameter": 5.5 }
+    },
+    {
+      "id": "spatula",
+      "step": 6,
+      "name": "Metal spatula / modelling tool",
+      "purpose": "Smooth and slice",
+      "quantity": "1",
+      "footprint": { "shape": "pill", "length": 15, "width": 2 }
+    },
+    {
+      "id": "sealer",
+      "step": 7,
+      "name": "Liquid latex + face powder (+ castor sealer)",
+      "purpose": "Seal the wax",
+      "quantity": "1 thin coat + light dusting",
+      "footprint": { "shape": "rect", "width": 15, "depth": 6 }
+    },
+    {
+      "id": "foundation",
+      "step": 8,
+      "name": "Foundation / concealer",
+      "purpose": "Blend into skin",
+      "quantity": "Pea-sized amount",
+      "footprint": { "shape": "pill", "length": 10, "width": 3 },
+      "quantityVisual": { "type": "sphere", "diameter": 0.8, "color": "#c99a78" }
+    },
+    {
+      "id": "cream-wheel",
+      "step": 9,
+      "name": "Cuts & bruises cream wheel",
+      "purpose": "Colour the cut and bruise",
+      "quantity": "Small amounts of 3–4 shades",
+      "footprint": { "shape": "circle", "diameter": 7 }
+    },
+    {
+      "id": "sponge-brush",
+      "step": 10,
+      "name": "Stipple sponge + fine brush",
+      "purpose": "Texture and detail",
+      "quantity": "1 small piece + 1 brush",
+      "footprint": { "shape": "rect", "width": 17, "depth": 5 }
+    },
+    {
+      "id": "thick-blood",
+      "step": 11,
+      "name": "Thick blood",
+      "purpose": "Fill the cut",
+      "quantity": "About ½ teaspoon (2.5 ml)",
+      "footprint": { "shape": "circle", "diameter": 4.5 },
+      "quantityVisual": { "type": "blob", "volumeMl": 2.5, "color": "#6d0a10" }
+    },
+    {
+      "id": "stage-blood",
+      "step": 12,
+      "name": "Liquid stage blood",
+      "purpose": "Drips",
+      "quantity": "2–3 drops",
+      "footprint": { "shape": "circle", "diameter": 4.5 },
+      "quantityVisual": { "type": "drops", "count": 3, "color": "#9c1016" }
+    },
+    {
+      "id": "remover",
+      "step": 13,
+      "name": "Spirit gum remover",
+      "purpose": "Clean-up",
+      "quantity": "As needed",
+      "footprint": { "shape": "circle", "diameter": 4.5 }
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { clearSavedMat, saveMat, type SavedMat } from '../lib/matStore';
+import type { Kit } from '../lib/kit';
+import { clearSavedMat, loadOpacity, saveMat, type SavedMat } from '../lib/matStore';
 import { PinchDetector } from '../lib/pinch';
 import { fitRectangle, isBigEnough, orientToViewer, type MatPlacement } from '../lib/rectFit';
 import { StrokeBuffer } from '../lib/stroke';
@@ -18,6 +19,8 @@ export interface MatExperienceEvents {
 }
 
 export interface StartOptions {
+  /** What to lay out on the mat. */
+  kit: Kit;
   /** Restore this mat from its persistent anchor instead of drawing a new one. */
   restore?: SavedMat | null;
 }
@@ -60,6 +63,7 @@ export class MatExperience {
   private readonly mat = new MatView();
 
   private session: XRSession | null = null;
+  private kit: Kit | null = null;
   private phase: Phase = 'draw';
   private lastTime = 0;
   /** The hand drawing the current stroke. */
@@ -99,8 +103,13 @@ export class MatExperience {
   }
 
   /** Takes over a freshly granted session. */
-  async start(session: XRSession, options: StartOptions = {}) {
+  async start(session: XRSession, options: StartOptions) {
     this.session = session;
+    if (options.kit !== this.kit) {
+      this.kit = options.kit;
+      this.mat.setKit(options.kit);
+    }
+    this.mat.setOpacity(loadOpacity());
     session.addEventListener('end', this.handleEnd);
     await this.renderer.xr.setSession(session);
     this.lastTime = 0;
@@ -197,6 +206,7 @@ export class MatExperience {
         this.trackAnchor(frame, space);
         break;
     }
+    this.mat.update(this.head, time / 1000);
 
     this.strokeView.update(dt);
     this.hint.update(dt, this.head, this.headMatrix);

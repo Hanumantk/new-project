@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { loadKit, type Kit, type KitResult } from './lib/kit';
 import { loadSavedMat, type SavedMat } from './lib/matStore';
 import { MatExperience } from './xr/MatExperience';
 import { checkARSupport, describeError, MAT_SESSION_INIT, type ARSupport } from './xr/session';
@@ -15,11 +16,14 @@ export function MatPage() {
   const [inSession, setInSession] = useState(false);
   const [error, setError] = useState<{ message: string; detail: string } | null>(null);
   const [savedMat, setSavedMat] = useState<SavedMat | null>(loadSavedMat);
+  const [kitResult, setKitResult] = useState<KitResult | null>(null);
+  const kit = kitResult?.ok ? kitResult.kit : null;
   const experienceRef = useRef<MatExperience | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void checkARSupport().then((result) => !cancelled && setSupport(result));
+    void loadKit().then((result) => !cancelled && setKitResult(result));
     return () => {
       cancelled = true;
       experienceRef.current?.dispose();
@@ -27,7 +31,7 @@ export function MatPage() {
     };
   }, []);
 
-  const enter = async (restore: SavedMat | null) => {
+  const enter = async (kit: Kit, restore: SavedMat | null) => {
     const xr = navigator.xr;
     if (!xr) return;
     setError(null);
@@ -49,7 +53,7 @@ export function MatPage() {
     }));
     try {
       setInSession(true);
-      await experience.start(session, { restore });
+      await experience.start(session, { kit, restore });
     } catch (err) {
       console.error(err);
       setInSession(false);
@@ -76,15 +80,15 @@ export function MatPage() {
               Exit AR
             </button>
           </>
-        ) : support === 'checking' ? (
+        ) : support === 'checking' || !kitResult ? (
           <p className="mat-note">Checking for passthrough AR…</p>
-        ) : support === 'supported' ? (
+        ) : !kit ? null : support === 'supported' ? (
           <div className="mat-actions">
-            <button type="button" className="button button--primary" onClick={() => enter(null)}>
+            <button type="button" className="button button--primary" onClick={() => enter(kit, null)}>
               Enter AR
             </button>
             {savedMat && (
-              <button type="button" className="panel button" onClick={() => enter(savedMat)}>
+              <button type="button" className="panel button" onClick={() => enter(kit, savedMat)}>
                 Restore last mat ({Math.round(savedMat.width * 100)} × {Math.round(savedMat.depth * 100)} cm)
               </button>
             )}
@@ -105,6 +109,9 @@ export function MatPage() {
             </p>
           </div>
         )}
+
+        {kitResult && !kitResult.ok && <KitErrors errors={kitResult.errors} />}
+        {kit && <KitList kit={kit} />}
 
         <a className="intro-link" href="./">
           Back to the palm injury prototype
@@ -131,5 +138,49 @@ function Unsupported({ support }: { support: Exclude<ARSupport, 'checking' | 'su
         for Chrome or Edge, pick a Quest 3, reload, and Enter AR appears here.
       </p>
     </div>
+  );
+}
+
+function KitErrors({ errors }: { errors: string[] }) {
+  return (
+    <div className="mat-error" role="alert">
+      <p className="intro-error">
+        materials.json has {errors.length === 1 ? 'a problem' : `${errors.length} problems`}, so the mat can’t
+        start:
+      </p>
+      <ul className="mat-error-list">
+        {errors.map((error) => (
+          <li key={error}>{error}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const footprintLabel = ({ shape, width, depth }: Kit['items'][number]['footprint']) => {
+  const cm = (m: number) => `${Math.round(m * 1000) / 10}`;
+  return shape === 'circle' ? `⌀ ${cm(width)} cm` : `${cm(width)} × ${cm(depth)} cm`;
+};
+
+/** The kit as a list, so edits to materials.json can be checked without a headset. */
+function KitList({ kit }: { kit: Kit }) {
+  return (
+    <details className="mat-kit">
+      <summary>
+        {kit.title} · {kit.items.length} items
+      </summary>
+      <ol className="mat-kit-list">
+        {kit.items.map((item) => (
+          <li key={item.id}>
+            <span className="mat-kit-step">{item.step}</span>
+            <span className="mat-kit-main">
+              <strong>{item.name}</strong>
+              <span>{item.quantity}</span>
+            </span>
+            <span className="mat-kit-size">{footprintLabel(item.footprint)}</span>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
