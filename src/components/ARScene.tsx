@@ -1,15 +1,19 @@
 import { memo, useRef, type RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { createHandPose, type HandPose } from '../lib/handPose';
+import { createSkinLighting, type SkinLighting } from '../lib/skinLighting';
 import type { TrackingState } from '../lib/tracking';
 import { PalmInjury } from './PalmInjury';
 import { VideoBackground } from './VideoBackground';
+import { WebcamCompositor } from './WebcamCompositor';
 import { WebcamPoseSource } from './WebcamPoseSource';
 
 interface ARSceneProps {
   tracking: RefObject<TrackingState>;
   /** Receives the function that requests a render; called once per detected frame. */
   onReady: (invalidate: () => void) => void;
+  /** Show the palm grid as a wireframe. */
+  debug?: boolean;
 }
 
 /**
@@ -18,8 +22,9 @@ interface ARSceneProps {
  * shows one captured frame together with the pose detected on it.
  * Memoised so the HUD's updates never re-render the scene.
  */
-export const ARScene = memo(function ARScene({ tracking, onReady }: ARSceneProps) {
+export const ARScene = memo(function ARScene({ tracking, onReady, debug = false }: ARSceneProps) {
   const pose = useRef<HandPose>(createHandPose());
+  const lighting = useRef<SkinLighting>(createSkinLighting());
   return (
     <Canvas
       frameloop="demand"
@@ -28,11 +33,10 @@ export const ARScene = memo(function ARScene({ tracking, onReady }: ARSceneProps
       camera={{ fov: 45, near: 0.01, far: 10, position: [0, 0, 0] }}
       onCreated={(state) => onReady(state.invalidate)}
     >
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[0.6, 1, 0.8]} intensity={0.9} />
       <WebcamPoseSource tracking={tracking} pose={pose} />
       <VideoBackground tracking={tracking} pose={pose} />
-      <PalmInjury pose={pose} />
+      <PalmInjury pose={pose} composite lighting={lighting} debug={debug} />
+      <WebcamCompositor tracking={tracking} lighting={lighting} debug={debug} />
     </Canvas>
   );
 });

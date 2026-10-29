@@ -5,6 +5,7 @@ import { computeCover, createCoverRect } from '../lib/coverMapping';
 import { drawLandmarks } from '../lib/drawLandmarks';
 import { CLOSED_HAND_SCORE, OPEN_HAND_SCORE } from '../lib/handPose';
 import { LandmarkFilter } from '../lib/oneEuroFilter';
+import { SkinSampler } from '../lib/skinSampler';
 import { createTrackingState, handOpenness, type TrackingState } from '../lib/tracking';
 import { ARScene } from './ARScene';
 import { Hud, type HandStatus } from './Hud';
@@ -12,6 +13,8 @@ import { Hud, type HandStatus } from './Hud';
 /** Frames a new handedness label must persist before we believe it. */
 const HANDEDNESS_HYSTERESIS = 5;
 const FPS_UPDATE_MS = 500;
+/** Sample the skin's colour every this many frames. */
+const SKIN_SAMPLE_EVERY = 3;
 
 const UNSUPPORTED_MESSAGE =
   'This browser can’t access a camera here. Open the page over HTTPS (or localhost) in a recent Chrome, Edge, Firefox or Safari.';
@@ -60,6 +63,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
     const captureCtx = capture.getContext('2d', { alpha: false })!;
     tracking.frame = capture;
     const landmarkFilter = new LandmarkFilter();
+    const skinSampler = new SkinSampler();
 
     let cancelled = false;
     let rafId = 0;
@@ -140,6 +144,12 @@ export function ARView({ onError, onStop }: ARViewProps) {
       tracking.landmarks = landmarks;
       tracking.frameId++;
       handPresent = landmarks !== null;
+
+      // Light matching: read the skin around the wound every few frames
+      // (lighting changes slowly; the reading is smoothed anyway).
+      if (landmarks && tracking.frameId % SKIN_SAMPLE_EVERY === 0) {
+        skinSampler.update(video, width, height, landmarks, tracking.skin);
+      }
 
       // Draw this frame (background + wound) together, once.
       invalidateRef.current?.();

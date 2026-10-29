@@ -1,4 +1,5 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { createSkinSample, type SkinSample } from './skinSampler';
 
 /**
  * Mutable state shared between the detection loop and the 3D scene.
@@ -19,6 +20,8 @@ export interface TrackingState {
   handOpen: boolean;
   /** Increments every time a new video frame has been captured and processed. */
   frameId: number;
+  /** The real skin around the wound: colour, brightness and camera noise. */
+  skin: SkinSample;
   /** Which frame the background and the wound pose were last rendered from. */
   rendered: { backgroundFrameId: number; poseFrameId: number; mismatches: number };
 }
@@ -30,6 +33,7 @@ export function createTrackingState(): TrackingState {
     isRightHand: true,
     handOpen: false,
     frameId: 0,
+    skin: createSkinSample(),
     rendered: { backgroundFrameId: -1, poseFrameId: -1, mismatches: 0 },
   };
 }
