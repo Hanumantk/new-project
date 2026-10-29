@@ -4,7 +4,8 @@ import { COLORS, hex, makeText, setTextContent, setTextOpacity } from './text';
 
 /** How far in front of the eyes, and how far below them, the hint floats. */
 const DISTANCE = 0.62;
-const DROP = 0.16;
+/** Low enough to sit below the injury simulation's own hint. */
+const DROP = 0.24;
 /** How quickly it catches up with the head (1/s). */
 const FOLLOW_RATE = 3;
 const FADE_RATE = 8;

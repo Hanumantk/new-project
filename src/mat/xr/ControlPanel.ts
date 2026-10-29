@@ -56,7 +56,7 @@ function roundedRect(width: number, height: number, radius: number) {
 }
 
 const material = (color: string, opacity: number) =>
-  new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+  new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, toneMapped: false });
 
 interface ButtonView {
   id: PanelButton;

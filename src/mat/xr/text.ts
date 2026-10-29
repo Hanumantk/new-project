@@ -1,4 +1,4 @@
-import { Color } from 'three';
+import { Color, DoubleSide, MeshBasicMaterial } from 'three';
 import { Text } from 'troika-three-text';
 
 const fontUrl = (file: string) => new URL(`material-mat/fonts/${file}`, document.baseURI).href;
@@ -26,6 +26,13 @@ export const COLORS = {
  */
 export const hex = (color: string) => new Color(color).getHex();
 
+/**
+ * Base material for text: like troika's default, but exempt from the
+ * scene's tone mapping so the off-white and mint stay true.
+ */
+export const textMaterial = () =>
+  new MeshBasicMaterial({ color: 0xffffff, side: DoubleSide, transparent: true, toneMapped: false });
+
 /** Opacity of the soft dark halo behind text. */
 const HALO_OPACITY = 0.62;
 
@@ -45,6 +52,7 @@ export interface TextStyle {
 /** SDF text in the app's style. Call `setTextOpacity` to fade it. */
 export function makeText(content: string, style: TextStyle): Text {
   const text = new Text();
+  text.material = textMaterial();
   text.text = content;
   text.font = style.weight === 'bold' ? FONTS.bold : FONTS.medium;
   text.fontSize = style.size;

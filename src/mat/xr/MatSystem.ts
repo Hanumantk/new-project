@@ -13,9 +13,7 @@ import { MatView } from './MatView';
 import { StrokeView } from './StrokeView';
 import { detectedHorizontalPlanes, findSurfacePlane, SurfaceProbe } from './surfaceProbe';
 
-export interface MatExperienceEvents {
-  /** The session ended (the user left it, or it failed). */
-  onEnd: () => void;
+export interface MatSystemEvents {
   /** A mat was saved for restoring later (or cleared, with null). */
   onSavedMatChange?: (mat: SavedMat | null) => void;
 }
@@ -40,26 +38,28 @@ const MIN_STROKE_POINTS = 12;
 const STROKE_LIFT = 0.04;
 /** Give up looking for a restored mat after this long (s). */
 const RESTORE_TIMEOUT = 12;
-/** Show the "use your hands" hint after this long without hands (s). */
-const NO_HANDS_HINT_AFTER = 1.5;
+/** How long the drawing prompt shows (s); the injury session has its own hints too. */
+const DRAW_HINT_TIME = 10;
 /** How quickly the overlay follows the opacity slider (1/s). */
 const OPACITY_RATE = 12;
 /** Fingertip radius assumed when the stroke has no hand (the ?test trace). */
 const DEFAULT_PEN_RADIUS = 0.008;
 
-const DRAW_TITLE = 'Pinch and trace a rectangle on your table';
-const DRAW_DETAIL = 'Hold thumb and index together, draw around the area, then let go. At least 25 × 20 cm.';
+const DRAW_TITLE = 'Lay out your materials';
+const DRAW_DETAIL = 'Pinch thumb and index on your table, trace a rectangle (at least 25 × 20 cm), then let go.';
 
 const cm = (m: number) => Math.round(m * 100);
 
 /**
- * The headset side of the Material Mat: one three.js renderer with a
- * transparent clear colour so passthrough shows, driven by the XR frame loop.
+ * The material mat, inside the injury simulation's mixed-reality session:
+ * pinch-trace a rectangle on the table and the kit is laid out on it. It
+ * adds `root` to the scene and is updated from the scene's XR frames; the
+ * session and renderer are the injury simulation's.
  */
-export class MatExperience {
-  private readonly renderer: THREE.WebGLRenderer;
-  private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(60, 1, 0.01, 20);
+export class MatSystem {
+  /** Everything the mat draws; add it to the scene once. */
+  readonly root = new THREE.Group();
+  private renderer: THREE.WebGLRenderer | null = null;
   private readonly hint = new HintBoard();
   private readonly hands = new HandTracker();
   private readonly pinches = { left: new PinchDetector(), right: new PinchDetector() };
@@ -77,7 +77,6 @@ export class MatExperience {
   private lastTime = 0;
   /** The hand drawing the current stroke. */
   private pen: HandState | null = null;
-  private noHandsFor = 0;
   private restoreWaited = 0;
   private stepMode = false;
   /** Index of the current item in step mode. */
@@ -96,19 +95,7 @@ export class MatExperience {
   private readonly head = new THREE.Vector3();
   private readonly headMatrix = new THREE.Matrix4();
 
-  constructor(private readonly events: MatExperienceEvents) {
-    const canvas = document.createElement('canvas');
-    const attributes = { alpha: true, antialias: true, xrCompatible: true } as const;
-    const context = canvas.getContext('webgl2', attributes) as WebGL2RenderingContext | null;
-    this.renderer = new THREE.WebGLRenderer({ canvas, ...attributes, ...(context ? { context } : {}) });
-    this.renderer.setClearColor(0x000000, 0);
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.xr.enabled = true;
-    this.renderer.xr.setReferenceSpaceType('local-floor');
-
-    this.scene.add(new THREE.HemisphereLight('#ffffff', '#5b6660', 1.6));
-    const sun = new THREE.DirectionalLight('#ffffff', 1.4);
-    sun.position.set(0.4, 2, 0.6);
+  constructor(private readonly events: MatSystemEvents = {}) {
     this.panel = new ControlPanel({
       onOpacity: (value, done) => {
         this.opacityTarget = value;
@@ -118,39 +105,40 @@ export class MatExperience {
     });
     this.mat.root.add(this.panel.group);
     this.handList = [this.hands.left, this.hands.right];
-    this.scene.add(sun, this.hint.group, this.strokeView.group, this.mat.root);
-    if (import.meta.env.DEV) (window as unknown as { __mat?: MatExperience }).__mat = this;
+    this.root.add(this.hint.group, this.strokeView.group, this.mat.root);
+    this.root.visible = false;
+    if (import.meta.env.DEV) (window as unknown as { __mat?: MatSystem }).__mat = this;
   }
 
   get active() {
     return this.session !== null;
   }
 
-  /** Takes over a freshly granted session. */
-  async start(session: XRSession, options: StartOptions) {
+  /** Starts with a running mixed-reality session (rendered by `renderer`). */
+  start(session: XRSession, renderer: THREE.WebGLRenderer, options: StartOptions) {
     this.session = session;
+    this.renderer = renderer;
     if (options.kit !== this.kit) {
       this.kit = options.kit;
       this.mat.setKit(options.kit);
     }
     this.opacityTarget = this.opacityShown = loadOpacity();
     this.mat.setOpacity(this.opacityShown);
-    session.addEventListener('end', this.handleEnd);
-    await this.renderer.xr.setSession(session);
     this.lastTime = 0;
+    this.root.visible = true;
     this.resetToDraw();
     if (options.restore) this.restore(session, options.restore);
-    this.renderer.setAnimationLoop(this.onFrame);
   }
 
-  end() {
-    void this.session?.end().catch(() => {});
-  }
-
-  dispose() {
-    this.end();
-    this.renderer.setAnimationLoop(null);
-    this.renderer.dispose();
+  /** The session ended: anchors die with it (a persistent one can be restored next time). */
+  stop() {
+    this.probe.cancel();
+    this.anchor = null;
+    this.session = null;
+    this.renderer = null;
+    this.root.visible = false;
+    this.mat.setVisible(false);
+    this.hint.hide();
   }
 
   /** Removes the mat (and its saved anchor) and starts drawing again. */
@@ -186,21 +174,13 @@ export class MatExperience {
     this.stroke.reset();
     this.probe.cancel();
     this.mat.setVisible(false);
-    this.hint.show(DRAW_TITLE, DRAW_DETAIL);
+    this.hint.show(DRAW_TITLE, DRAW_DETAIL, DRAW_HINT_TIME);
   }
 
-  private readonly handleEnd = () => {
-    this.renderer.setAnimationLoop(null);
-    this.probe.cancel();
-    // Anchors die with the session; a persistent one can be restored next time.
-    this.anchor = null;
-    this.session = null;
-    this.events.onEnd();
-  };
-
-  private readonly onFrame = (time: number, frame?: XRFrame) => {
-    const space = this.renderer.xr.getReferenceSpace();
-    if (!frame || !space) return;
+  /** Per XR frame, before the scene renders. `time` in ms. */
+  update(time: number, frame: XRFrame) {
+    const space = this.renderer?.xr.getReferenceSpace();
+    if (!this.session || !space) return;
     const dt = this.lastTime ? Math.min((time - this.lastTime) / 1000, 0.1) : 0;
     this.lastTime = time;
     this.readHead();
@@ -210,7 +190,6 @@ export class MatExperience {
 
     switch (this.phase) {
       case 'draw':
-        this.watchForHands(dt);
         if (this.testTraceRequested) {
           this.testTraceRequested = false;
           this.runTestTrace(frame, space);
@@ -250,19 +229,6 @@ export class MatExperience {
 
     this.strokeView.update(dt);
     this.hint.update(dt, this.head, this.headMatrix);
-    this.renderer.render(this.scene, this.camera);
-  };
-
-  private watchForHands(dt: number) {
-    if (this.hands.left.tracked || this.hands.right.tracked) {
-      if (this.noHandsFor >= NO_HANDS_HINT_AFTER) this.hint.show(DRAW_TITLE, DRAW_DETAIL);
-      this.noHandsFor = 0;
-      return;
-    }
-    this.noHandsFor += dt;
-    if (this.noHandsFor >= NO_HANDS_HINT_AFTER && this.noHandsFor - dt < NO_HANDS_HINT_AFTER) {
-      this.hint.show('Put the controllers down', 'The mat is drawn and used with your hands.');
-    }
   }
 
   private beginStroke(hand: HandState) {
@@ -402,7 +368,9 @@ export class MatExperience {
   /** Per frame while the mat is down: panel pokes, the palm-up toggle, the opacity fade. */
   private updateControls(dt: number) {
     const left = this.hands.left;
-    const busy = !left.tracked || left.pinchDistance < 0.03;
+    // Only while the right hand is tracked: then the wound is on the right
+    // palm, and turning the left palm up isn't someone looking at the wound.
+    const busy = !left.tracked || left.pinchDistance < 0.03 || !this.hands.right.tracked;
     if (this.palmUp.update(busy ? null : left.palmNormal.y, dt)) {
       this.panel.group.visible = !this.panel.group.visible;
       if (!this.panel.group.visible) this.hint.show('Controls hidden', 'Turn your left palm up again to bring them back.', 3);
@@ -534,7 +502,7 @@ export class MatExperience {
     this.anchor?.delete();
     this.anchor = null;
     this.resetToDraw();
-    this.hint.show('Couldn’t find your last mat here', 'Pinch and trace a new one.', Infinity, 'warn');
+    this.hint.show('Couldn’t find your last mat here', 'Pinch and trace a new one.', DRAW_HINT_TIME, 'warn');
   }
 
   /** Moves the mat to its anchor's latest pose. Returns whether the anchor is tracked. */
@@ -556,6 +524,7 @@ export class MatExperience {
 
   /** Eye midpoint and head orientation, from the per-eye cameras three.js updated for this frame. */
   private readHead() {
+    if (!this.renderer) return;
     const cameras: readonly THREE.Camera[] = this.renderer.xr.getCamera().cameras;
     if (cameras.length === 0) return;
     const e = cameras[0].matrix.elements;

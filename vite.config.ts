@@ -6,13 +6,4 @@ export default defineConfig({
   // https://<user>.github.io/new-project/ (GitHub Pages).
   base: './',
   plugins: [react()],
-  build: {
-    rolldownOptions: {
-      // Two pages: the palm-injury prototype and the Material Mat (headset only).
-      input: {
-        main: 'index.html',
-        mat: 'material-mat.html',
-      },
-    },
-  },
 });
