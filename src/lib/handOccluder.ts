@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { LM } from './tracking';
 
 /** Real finger half-thickness, in metres (scaled with the hand). */
-const FINGER_RADIUS = 0.0095;
+export const FINGER_RADIUS = 0.0095;
 /** The palm occluder sits this far behind the palm surface, in metres. */
 const PALM_BACKOFF = 0.006;
 /** Grows the palm outline a little so it covers the fleshy edge of the hand. */
 const PALM_OUTLINE_GROWTH = 1.25;
 
 /** Finger bones, as landmark index pairs (thumb first). */
-const FINGER_BONES: ReadonlyArray<readonly [number, number]> = [
+export const FINGER_BONES: ReadonlyArray<readonly [number, number]> = [
   [1, 2], [2, 3], [3, 4],
   [5, 6], [6, 7], [7, 8],
   [9, 10], [10, 11], [11, 12],
