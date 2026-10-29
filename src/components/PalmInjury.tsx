@@ -35,7 +35,7 @@ const CAVITY_OCCLUSION = 0.5;
 /** Bruise strength when multiplied into the camera picture. */
 const BRUISE_STRENGTH = 0.7;
 /**
- * When fingers hide this share of the wound (webcam view), fade the whole
+ * When fingers hide this share of the wound (as the viewer sees it), fade the whole
  * wound out rather than show slivers of it between and over the fingers.
  */
 const COVERED_FADE_START = 0.2;
@@ -216,15 +216,16 @@ export function PalmInjury({
       s.lastVersion = hand.version;
       s.hasShape = palm.update(hand.joints, hand.isRightHand, hand.surfaceOffset) || s.hasShape;
 
-      // Webcam view: how much of the wound do the fingers hide on screen?
-      if (composite && camera instanceof THREE.PerspectiveCamera) {
+      // How much of the wound do the fingers hide, as seen by the viewer?
+      const view = coverageView(gl, camera, size);
+      if (view) {
         const covered = s.coverage.measure(
           palm.woundSamples.length,
           (i, out) => palm.vertexAt(palm.woundSamples[i], out),
           hand.joints,
-          camera,
-          size.width,
-          size.height,
+          view.camera,
+          view.width,
+          view.height,
           palm.handScale,
         );
         s.uncoveredTarget = 1 - THREE.MathUtils.smoothstep(covered, COVERED_FADE_START, COVERED_FADE_END);
@@ -321,6 +322,24 @@ export function PalmInjury({
       />
     </>
   );
+}
+
+/**
+ * The camera (and a pixel size matching its aspect) to judge finger coverage
+ * from: the webcam scene's camera, or in a headset the left eye's.
+ */
+function coverageView(
+  gl: THREE.WebGLRenderer,
+  camera: THREE.Camera,
+  size: { width: number; height: number },
+): { camera: THREE.PerspectiveCamera; width: number; height: number } | null {
+  if (gl.xr.isPresenting) {
+    const eye = gl.xr.getCamera().cameras[0];
+    if (!eye) return null;
+    const p = eye.projectionMatrix.elements;
+    return { camera: eye, width: (1000 * p[5]) / p[0], height: 1000 };
+  }
+  return camera instanceof THREE.PerspectiveCamera ? { camera, width: size.width, height: size.height } : null;
 }
 
 /**

@@ -6,6 +6,7 @@ import { drawLandmarks } from '../lib/drawLandmarks';
 import { CLOSED_HAND_SCORE, OPEN_HAND_SCORE } from '../lib/handPose';
 import { LandmarkFilter } from '../lib/oneEuroFilter';
 import { SkinSampler } from '../lib/skinSampler';
+import { loadWoundOpacity, saveWoundOpacity } from '../lib/woundOpacity';
 import { createTrackingState, handOpenness, type TrackingState } from '../lib/tracking';
 import { ARScene } from './ARScene';
 import { Hud, type HandStatus, type HudStats } from './Hud';
@@ -382,28 +383,6 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
       )}
     </div>
   );
-}
-
-const WOUND_OPACITY_KEY = 'palm-injury:wound-opacity';
-
-/** The last opacity this viewer chose (a per-browser convenience), else 100%. */
-function loadWoundOpacity(): number {
-  try {
-    const saved = window.localStorage.getItem(WOUND_OPACITY_KEY);
-    const value = saved === null ? NaN : Number(saved);
-    if (value >= 0 && value <= 1) return value;
-  } catch {
-    // storage unavailable (private mode, blocked): use the default
-  }
-  return 1;
-}
-
-function saveWoundOpacity(value: number) {
-  try {
-    window.localStorage.setItem(WOUND_OPACITY_KEY, String(value));
-  } catch {
-    // not remembered; fine
-  }
 }
 
 function stopStream(stream: MediaStream) {

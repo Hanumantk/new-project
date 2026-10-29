@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { createHandPose, type HandPose } from '../lib/handPose';
+import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
 import type { HandStatus } from './Hud';
 import { PalmInjury } from './PalmInjury';
 import { XRPoseSource } from './XRPoseSource';
@@ -15,6 +16,10 @@ interface XRSceneProps {
   floorY: number;
   rendererRef: RefObject<THREE.WebGLRenderer | null>;
   onHandStatus: (status: HandStatus) => void;
+  /** Wound opacity 0..1, shared with the page's slider. */
+  woundOpacity: RefObject<number>;
+  /** Called when the in-headset slider changes the opacity. */
+  onWoundOpacityChange: (value: number) => void;
 }
 
 /**
@@ -22,7 +27,14 @@ interface XRSceneProps {
  * hand tracking. In VR it adds virtual hands and a simple room; in mixed
  * reality the real room and hands show through passthrough.
  */
-export const XRScene = memo(function XRScene({ mode, floorY, rendererRef, onHandStatus }: XRSceneProps) {
+export const XRScene = memo(function XRScene({
+  mode,
+  floorY,
+  rendererRef,
+  onHandStatus,
+  woundOpacity,
+  onWoundOpacityChange,
+}: XRSceneProps) {
   const pose = useRef<HandPose>(createHandPose());
   const isVR = mode !== 'ar';
 
@@ -39,8 +51,9 @@ export const XRScene = memo(function XRScene({ mode, floorY, rendererRef, onHand
       <hemisphereLight args={['#ffffff', '#c9cfc7', 0.8]} />
       <directionalLight position={[0.6, 2.2, 0.8]} intensity={1} />
       <XRPoseSource pose={pose} showHands={isVR} />
-      <PalmInjury pose={pose} occlude={!isVR} />
+      <PalmInjury pose={pose} occlude={!isVR} strength={woundOpacity} />
       <HintPanel pose={pose} active={mode !== null} />
+      <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} />
       <StatusReporter pose={pose} onHandStatus={onHandStatus} />
     </Canvas>
   );
@@ -160,6 +173,157 @@ function drawHint(canvas: HTMLCanvasElement, text: string) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, w / 2, h / 2 + 4);
+}
+
+/**
+ * The wound-opacity slider inside the headset: a small panel placed below
+ * and to the left of where the user looks when the session starts. Press
+ * and slide along it with either index fingertip.
+ */
+function HeadsetSlider({
+  value,
+  active,
+  onChange,
+}: {
+  value: RefObject<number>;
+  active: boolean;
+  onChange: (value: number) => void;
+}) {
+  const gl = useThree((s) => s.gl);
+  const meshRef = useRef<THREE.Mesh>(null);
+  const { canvas, texture, material } = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 220;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, toneMapped: false });
+    return { canvas, texture, material };
+  }, []);
+  const scratch = useMemo(
+    () => ({
+      placed: false,
+      drawn: -1,
+      sent: -1,
+      head: new THREE.Vector3(),
+      forward: new THREE.Vector3(),
+      right: new THREE.Vector3(),
+      tip: new THREE.Vector3(),
+    }),
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      texture.dispose();
+      material.dispose();
+    },
+    [texture, material],
+  );
+
+  useFrame(() => {
+    const mesh = meshRef.current;
+    const opacity = value.current;
+    if (!mesh || opacity === null) return;
+    mesh.visible = active;
+    if (!active) {
+      scratch.placed = false;
+      return;
+    }
+
+    if (!scratch.placed) {
+      const head = gl.xr.getCamera();
+      head.getWorldPosition(scratch.head);
+      if (scratch.head.lengthSq() === 0) return; // no head pose yet
+      head.getWorldDirection(scratch.forward);
+      scratch.forward.y = 0;
+      scratch.forward.normalize();
+      scratch.right.set(-scratch.forward.z, 0, scratch.forward.x);
+      mesh.position
+        .copy(scratch.head)
+        .addScaledVector(scratch.forward, 0.42)
+        .addScaledVector(scratch.right, -0.17);
+      mesh.position.y -= 0.22;
+      mesh.lookAt(scratch.head);
+      mesh.updateMatrixWorld();
+      scratch.placed = true;
+    }
+
+    // Either index fingertip pressing the panel sets the value.
+    for (const i of [0, 1]) {
+      const tip = gl.xr.getHand(i).joints['index-finger-tip'];
+      if (!tip?.visible) continue;
+      mesh.worldToLocal(tip.getWorldPosition(scratch.tip));
+      const next = pokeSliderValue(scratch.tip.x, scratch.tip.y, scratch.tip.z, HEADSET_SLIDER);
+      if (next === null) continue;
+      value.current = next;
+      const percent = Math.round(next * 100);
+      if (percent !== scratch.sent) {
+        scratch.sent = percent;
+        onChange(next);
+      }
+    }
+
+    const percent = Math.round(value.current * 100);
+    if (percent !== scratch.drawn) {
+      scratch.drawn = percent;
+      drawSlider(canvas, value.current);
+      texture.needsUpdate = true;
+    }
+  });
+
+  return (
+    <mesh ref={meshRef} material={material} visible={false}>
+      <planeGeometry args={[HEADSET_SLIDER.width, HEADSET_SLIDER.height]} />
+    </mesh>
+  );
+}
+
+function drawSlider(canvas: HTMLCanvasElement, value: number) {
+  const ctx = canvas.getContext('2d')!;
+  const { width: w, height: h } = canvas;
+  const toPx = (x: number) => (x / HEADSET_SLIDER.width + 0.5) * w;
+  const x0 = toPx(HEADSET_SLIDER.trackStart);
+  const x1 = toPx(HEADSET_SLIDER.trackEnd);
+  const cy = h / 2;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
+  ctx.beginPath();
+  ctx.roundRect(4, 4, w - 8, h - 8, 48);
+  ctx.fill();
+
+  ctx.fillStyle = '#6b746f';
+  ctx.font = '500 40px "DM Sans", system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillText('Wound', 44, cy - 24);
+  ctx.fillText('opacity', 44, cy + 24);
+
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 16;
+  ctx.strokeStyle = '#d6dbd8';
+  ctx.beginPath();
+  ctx.moveTo(x0, cy);
+  ctx.lineTo(x1, cy);
+  ctx.stroke();
+  const knob = x0 + (x1 - x0) * value;
+  ctx.strokeStyle = '#2f9e63';
+  ctx.beginPath();
+  ctx.moveTo(x0, cy);
+  ctx.lineTo(Math.max(knob, x0 + 0.1), cy);
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#2f9e63';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.arc(knob, cy, 30, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#1f2a24';
+  ctx.font = '600 46px "DM Sans", system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${Math.round(value * 100)}%`, w - 40, cy + 2);
 }
 
 /** Tells the page (outside the headset) whether a hand is tracked. */
