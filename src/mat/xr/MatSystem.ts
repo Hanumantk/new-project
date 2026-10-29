@@ -50,8 +50,8 @@ const DRAW_TITLE = 'Lay out your materials';
 const DRAW_DETAIL = 'Pinch thumb and index on your table, trace a rectangle (at least 25 × 20 cm), then let go.';
 
 const cm = (m: number) => Math.round(m * 100);
-/** Dropped over a detected table this much higher or lower (m), the mat settles onto it. */
-const RETABLE_RANGE = 0.5;
+/** Let go within this of a detected table's surface (m), the mat settles flush onto it; otherwise it stays where it was let go. */
+const RETABLE_RANGE = 0.06;
 
 const matWorld = new THREE.Matrix4();
 const matInverse = new THREE.Matrix4();
@@ -529,8 +529,9 @@ export class MatSystem {
   }
 
   /**
-   * After the mat is put down: settle it onto a detected table if it was
-   * carried over one, and anchor it there in place of the old anchor.
+   * After the mat is let go: settle it flush onto a detected table if it's
+   * within a few centimetres of one (otherwise it stays exactly where it was
+   * let go), and anchor it there in place of the old anchor.
    */
   private reanchor(frame: XRFrame, space: XRReferenceSpace) {
     this.reanchorRequested = false;
@@ -553,7 +554,7 @@ export class MatSystem {
     this.anchorMat(frame, space, x, y, z, yaw);
   }
 
-  /** The whole mat: put a fist on it to slide and turn it on the table. */
+  /** The whole mat: put a fist on it to carry it (up and down too) and turn it. */
   private matGrabbable(): Grabbable {
     const bounds = new THREE.Box3();
     return {

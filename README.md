@@ -140,9 +140,11 @@ and the wound-opacity panel.
    turns white), and it follows your fist.
 3. **Open your hand** and it stays where it is.
 
-The mat slides and turns with your fist but stays flat on the table. If you
-put it down over another detected table, it settles onto that one. It's
-re-anchored where you leave it, so it's still there next time. Panels
+The mat follows your fist in every direction, up and down included, and
+turns with it while staying flat. It stays exactly where you open your
+hand. If that's within 6 cm of a detected table's surface, it settles flush
+onto the table. It's re-anchored where you leave it, so it's still there
+next time. Panels
 follow your fist in 3D and turn to face you. The mat's panel stays where
 you put it relative to the mat (also remembered), and moves with the mat.
 

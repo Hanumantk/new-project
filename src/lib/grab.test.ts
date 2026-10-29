@@ -84,7 +84,7 @@ describe('fist', () => {
 });
 
 describe('GrabSystem', () => {
-  it('a fist on the mat slides it on the table, level and at its height, and it stays where the hand opens', () => {
+  it('a fist on the mat carries it with the fist, up and down too, staying level; it stays where the hand opens', () => {
     const grab = new GrabSystem();
     const mat = new Box('table', new THREE.Vector3(0.6, 0.1, 0.4), new THREE.Vector3(0, 0.75, -0.5));
     grab.add(mat);
@@ -101,7 +101,9 @@ describe('GrabSystem', () => {
     poseHand(hand, new THREE.Vector3(0.4, 1.0, -0.45), true);
     run(grab, hands, 1);
     expect(mat.object.position.x).toBeCloseTo(0.3, 2);
-    expect(mat.object.position.y).toBeCloseTo(0.75, 6); // stays on the table
+    expect(mat.object.position.y).toBeCloseTo(0.95, 2); // lifted with the fist
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(mat.object.quaternion);
+    expect(up.y).toBeCloseTo(1, 6); // still level
     poseHand(hand, new THREE.Vector3(0.4, 1.0, -0.45), false);
     run(grab, hands, 0.05);
     expect(mat.ended).toBe(1);
