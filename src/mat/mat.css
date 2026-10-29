@@ -1,0 +1,53 @@
+/* ---------- Material Mat page ---------- */
+
+.mat-card {
+  max-width: 460px;
+}
+
+.mat-card p {
+  text-align: left;
+}
+
+.mat-card .mat-note {
+  font-size: 13px;
+  margin: 0;
+}
+
+.mat-unsupported,
+.mat-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.mat-unsupported a {
+  color: var(--mint-strong);
+}
+
+/* A mat outline with a dashed slot and mint corner ticks. */
+.mat-icon {
+  position: relative;
+  width: 52px;
+  height: 40px;
+  border-radius: 6px;
+  background: #22302a;
+  box-shadow: 0 10px 20px rgba(20, 40, 30, 0.2);
+  margin-bottom: 4px;
+}
+
+.mat-icon::before {
+  content: '';
+  position: absolute;
+  inset: 9px 24px 9px 9px;
+  border: 2px dashed #8eddb0;
+  border-radius: 50%;
+}
+
+.mat-icon::after {
+  content: '';
+  position: absolute;
+  inset: 12px 8px 12px 32px;
+  border: 2px dashed #8eddb0;
+  border-radius: 3px;
+}
