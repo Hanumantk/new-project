@@ -1,0 +1,84 @@
+<!doctype html>
+<!--
+  Renders the sample clip in public/samples/palm-moving.webm, one frame per
+  window.renderFrame(t) call. See README.md in this folder.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/node_modules/three/build/three.module.js",
+          "three/addons/": "/node_modules/three/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      html, body { margin: 0; background: #000; }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'three';
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+      const W = 1280;
+      const H = 720;
+      const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+      renderer.setSize(W, H);
+      renderer.setPixelRatio(1);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      document.body.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color('#bfc3bd');
+      const camera = new THREE.PerspectiveCamera(41, W / H, 0.01, 10); // ~ a laptop webcam
+      scene.add(new THREE.HemisphereLight('#fff6ee', '#6b6460', 1.4));
+      const key = new THREE.DirectionalLight('#fff3e6', 2.2);
+      key.position.set(0.5, 1, 1.2);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight('#dfe8ff', 0.6);
+      fill.position.set(-1, 0.2, 0.6);
+      scene.add(fill);
+
+      // WebXR "generic hand" (right), MIT licence: see LICENSE-generic-hand.md.
+      const gltf = await new GLTFLoader().loadAsync('./generic-hand-right.glb');
+      const hand = gltf.scene;
+      hand.traverse((o) => {
+        if (o.isMesh) {
+          o.material = new THREE.MeshStandardMaterial({ color: '#d9a386', roughness: 0.62 });
+          o.frustumCulled = false;
+        }
+      });
+      hand.position.set(-0.02, 0, 0);
+      // The model rests fingers-down and side-on; turn the palm to the camera.
+      const holder = new THREE.Group();
+      holder.rotation.set(0, -Math.PI / 2, Math.PI);
+      holder.add(hand);
+      const rig = new THREE.Group();
+      rig.add(holder);
+      scene.add(rig);
+
+      /** Palm towards the camera, drifting, turning, tilting, with one fast sweep. */
+      window.renderFrame = (t) => {
+        const TAU = Math.PI * 2;
+        let x = 0.04 * Math.sin((TAU * t) / 3.2);
+        if (t > 3.8 && t < 4.6) {
+          x -= 0.05 * Math.sin((Math.PI * (t - 3.8)) / 0.8) * Math.sign(Math.sin((TAU * t) / 3.2) || 1);
+        }
+        const y = -0.03 + 0.018 * Math.sin((TAU * t) / 2.3);
+        const z = -0.27 + 0.04 * Math.sin((TAU * t) / 3.7);
+        rig.position.set(x, y, z);
+        rig.rotation.set(
+          0.45 * Math.sin((TAU * t) / 5.0),
+          0.65 * Math.sin((TAU * t) / 4.1 + 0.6),
+          0.3 * Math.sin((TAU * t) / 2.9),
+        );
+        renderer.render(scene, camera);
+      };
+      window.ready = true;
+    </script>
+  </body>
+</html>

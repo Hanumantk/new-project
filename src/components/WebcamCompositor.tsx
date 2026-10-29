@@ -149,6 +149,7 @@ export function WebcamCompositor({ tracking, lighting, debug }: WebcamCompositor
   useFrame((state) => {
     const { scene, camera } = state;
     const tracked = tracking.current;
+    if (tracked) tracked.rendered.renders++;
 
     gl.getDrawingBufferSize(pass.drawingBuffer);
     const { x: width, y: height } = pass.drawingBuffer;

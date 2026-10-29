@@ -4,8 +4,29 @@ import { XRView } from './components/XRView';
 
 type Screen = { kind: 'start' } | { kind: 'ar' } | { kind: 'xr' } | { kind: 'error'; message: string };
 
+/** The bundled test clip (an open palm moving), relative to the site. */
+const SAMPLE_VIDEO_PATH = 'samples/palm-moving.webm';
+
+/**
+ * `?video=<path>` plays that file in a loop instead of the webcam. Only
+ * same-origin files: the frames have to be readable for hand detection.
+ */
+function sampleVideoFromUrl(): string | null {
+  const value = new URLSearchParams(window.location.search).get('video');
+  if (!value) return null;
+  try {
+    const url = new URL(value, document.baseURI);
+    if (url.origin === window.location.origin) return url.href;
+  } catch {
+    // fall through
+  }
+  console.warn(`Ignoring ?video=${value}: only same-origin video files can be used.`);
+  return null;
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: 'start' });
+  const [sampleVideo] = useState(sampleVideoFromUrl);
   // In a headset browser with passthrough (e.g. Quest Browser), lead with mixed reality.
   const [canMixedReality, setCanMixedReality] = useState(false);
 
@@ -19,6 +40,7 @@ export default function App() {
   if (screen.kind === 'ar') {
     return (
       <ARView
+        sampleVideo={sampleVideo}
         onError={(message) => setScreen({ kind: 'error', message })}
         onStop={() => setScreen({ kind: 'start' })}
       />
@@ -37,6 +59,11 @@ export default function App() {
         {screen.kind === 'error' ? (
           <p className="intro-error" role="alert">
             {screen.message}
+          </p>
+        ) : sampleVideo ? (
+          <p>
+            Test mode: a looping video plays instead of the webcam, so you can see the wound track
+            a moving palm without a camera.
           </p>
         ) : canMixedReality ? (
           <p>
@@ -59,13 +86,16 @@ export default function App() {
           className={canMixedReality ? 'panel button' : 'button button--primary'}
           onClick={() => setScreen({ kind: 'ar' })}
         >
-          {screen.kind === 'error' ? 'Try again' : 'Start camera'}
+          {screen.kind === 'error' ? 'Try again' : sampleVideo ? 'Start sample video' : 'Start camera'}
         </button>
-        {!canMixedReality && (
+        {!canMixedReality && !sampleVideo && (
           <button type="button" className="panel button" onClick={() => setScreen({ kind: 'xr' })}>
             Use a VR headset
           </button>
         )}
+        <a className="intro-link" href={sampleVideo ? '?' : `?video=${SAMPLE_VIDEO_PATH}`}>
+          {sampleVideo ? 'Use the webcam instead' : 'No camera? Try the sample video'}
+        </a>
       </div>
     </main>
   );

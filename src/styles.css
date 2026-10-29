@@ -450,3 +450,43 @@ button {
   word-break: break-all;
   user-select: all;
 }
+
+.hud-sep {
+  margin: 0 2px;
+  opacity: 0.5;
+}
+
+.hud-debug {
+  display: flex;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-debug strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.hud-good {
+  color: var(--mint-strong);
+  font-weight: 600;
+}
+
+.hud-bad {
+  color: #b04a32;
+  font-weight: 600;
+}
+
+.intro-link {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.intro-link:hover {
+  color: var(--text);
+}

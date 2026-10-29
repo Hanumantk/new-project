@@ -23,7 +23,7 @@ export interface TrackingState {
   /** The real skin around the wound: colour, brightness and camera noise. */
   skin: SkinSample;
   /** Which frame the background and the wound pose were last rendered from. */
-  rendered: { backgroundFrameId: number; poseFrameId: number; mismatches: number };
+  rendered: { backgroundFrameId: number; poseFrameId: number; mismatches: number; renders: number };
 }
 
 export function createTrackingState(): TrackingState {
@@ -34,7 +34,7 @@ export function createTrackingState(): TrackingState {
     handOpen: false,
     frameId: 0,
     skin: createSkinSample(),
-    rendered: { backgroundFrameId: -1, poseFrameId: -1, mismatches: 0 },
+    rendered: { backgroundFrameId: -1, poseFrameId: -1, mismatches: 0, renders: 0 },
   };
 }
 
