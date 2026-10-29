@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import type { Kit } from '../lib/kit';
-import { clearSavedMat, loadOpacity, saveMat, type SavedMat } from '../lib/matStore';
+import { clearSavedMat, loadOpacity, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
+import { PalmUpToggle } from '../lib/palmUp';
 import { PinchDetector } from '../lib/pinch';
 import { fitRectangle, isBigEnough, orientToViewer, type MatPlacement } from '../lib/rectFit';
 import { StrokeBuffer } from '../lib/stroke';
 import { medianY, surfaceFromPen } from '../lib/surface';
+import { ControlPanel, type PanelButton } from './ControlPanel';
 import { HandTracker, type HandState } from './hands';
 import { HintBoard } from './HintBoard';
 import { MatView } from './MatView';
@@ -40,6 +42,8 @@ const STROKE_LIFT = 0.04;
 const RESTORE_TIMEOUT = 12;
 /** Show the "use your hands" hint after this long without hands (s). */
 const NO_HANDS_HINT_AFTER = 1.5;
+/** How quickly the overlay follows the opacity slider (1/s). */
+const OPACITY_RATE = 12;
 
 const DRAW_TITLE = 'Pinch and trace a rectangle on your table';
 const DRAW_DETAIL = 'Hold thumb and index together, draw around the area, then let go. At least 25 × 20 cm.';
@@ -61,6 +65,9 @@ export class MatExperience {
   private readonly strokeView = new StrokeView();
   private readonly probe = new SurfaceProbe();
   private readonly mat = new MatView();
+  private readonly panel: ControlPanel;
+  private readonly handList: readonly HandState[];
+  private readonly palmUp = new PalmUpToggle();
 
   private session: XRSession | null = null;
   private kit: Kit | null = null;
@@ -70,6 +77,11 @@ export class MatExperience {
   private pen: HandState | null = null;
   private noHandsFor = 0;
   private restoreWaited = 0;
+  private stepMode = false;
+  /** Index of the current item in step mode. */
+  private step = 0;
+  private opacityTarget = 1;
+  private opacityShown = 1;
 
   private anchor: XRAnchor | null = null;
   private readonly anchorSpaces: XRSpace[] = [];
@@ -94,6 +106,15 @@ export class MatExperience {
     this.scene.add(new THREE.HemisphereLight('#ffffff', '#5b6660', 1.6));
     const sun = new THREE.DirectionalLight('#ffffff', 1.4);
     sun.position.set(0.4, 2, 0.6);
+    this.panel = new ControlPanel({
+      onOpacity: (value, done) => {
+        this.opacityTarget = value;
+        if (done) saveOpacity(value);
+      },
+      onButton: (button) => this.onPanelButton(button),
+    });
+    this.mat.root.add(this.panel.group);
+    this.handList = [this.hands.left, this.hands.right];
     this.scene.add(sun, this.hint.group, this.strokeView.group, this.mat.root);
     if (import.meta.env.DEV) (window as unknown as { __mat?: MatExperience }).__mat = this;
   }
@@ -109,7 +130,8 @@ export class MatExperience {
       this.kit = options.kit;
       this.mat.setKit(options.kit);
     }
-    this.mat.setOpacity(loadOpacity());
+    this.opacityTarget = this.opacityShown = loadOpacity();
+    this.mat.setOpacity(this.opacityShown);
     session.addEventListener('end', this.handleEnd);
     await this.renderer.xr.setSession(session);
     this.lastTime = 0;
@@ -147,6 +169,7 @@ export class MatExperience {
   private resetToDraw() {
     this.generation++;
     this.phase = 'draw';
+    this.stepMode = false;
     this.pen = null;
     this.stroke.reset();
     this.probe.cancel();
@@ -196,6 +219,7 @@ export class MatExperience {
         this.restoreWaited += dt;
         if (this.trackAnchor(frame, space)) {
           this.phase = 'placed';
+          this.showControls();
           this.mat.setVisible(true);
           this.hint.show('Found your last mat', `${cm(this.mat.width)} × ${cm(this.mat.depth)} cm`, 3);
         } else if (this.restoreWaited > RESTORE_TIMEOUT) {
@@ -204,6 +228,7 @@ export class MatExperience {
         break;
       case 'placed':
         this.trackAnchor(frame, space);
+        this.updateControls(dt);
         break;
     }
     this.mat.update(this.head, time / 1000);
@@ -305,6 +330,79 @@ export class MatExperience {
     this.mat.setPose(placement.cx, y, placement.cz, placement.yaw);
     this.mat.setVisible(true);
     this.phase = 'placed';
+    this.showControls();
+  }
+
+  private showControls() {
+    this.panel.placeFor(this.mat.width, this.mat.depth);
+    this.panel.group.visible = true;
+    this.refreshPanel();
+  }
+
+  /** Per frame while the mat is down: panel pokes, the palm-up toggle, the opacity fade. */
+  private updateControls(dt: number) {
+    const left = this.hands.left;
+    const busy = !left.tracked || left.pinchDistance < 0.03;
+    if (this.palmUp.update(busy ? null : left.palmNormal.y, dt)) {
+      this.panel.group.visible = !this.panel.group.visible;
+      if (!this.panel.group.visible) this.hint.show('Controls hidden', 'Turn your left palm up again to bring them back.', 3);
+      else this.hint.hide();
+    }
+    if (this.panel.group.visible) this.panel.update(dt, this.handList);
+    if (this.opacityShown !== this.opacityTarget) {
+      this.opacityShown += (this.opacityTarget - this.opacityShown) * (1 - Math.exp(-OPACITY_RATE * dt));
+      if (Math.abs(this.opacityShown - this.opacityTarget) < 0.003) this.opacityShown = this.opacityTarget;
+      this.mat.setOpacity(this.opacityShown);
+    }
+  }
+
+  private onPanelButton(button: PanelButton) {
+    const count = this.mat.itemCount;
+    switch (button) {
+      case 'redraw':
+        this.redraw();
+        return;
+      case 'step':
+        this.stepMode = !this.stepMode;
+        // Start from the first item on the page in view.
+        if (this.stepMode) this.step = Math.max(this.firstItemOnPage(this.mat.page), 0);
+        break;
+      case 'prev':
+      case 'next': {
+        const delta = button === 'next' ? 1 : -1;
+        if (this.stepMode) this.step = Math.min(Math.max(this.step + delta, 0), count - 1);
+        else this.mat.setPage(this.mat.page + delta);
+        break;
+      }
+    }
+    this.mat.setActiveStep(this.stepMode ? this.step : -1);
+    this.refreshPanel();
+  }
+
+  private firstItemOnPage(page: number) {
+    for (let i = 0; i < this.mat.itemCount; i++) if (this.mat.pageOf(i) === page) return i;
+    return -1;
+  }
+
+  private refreshPanel() {
+    const count = this.mat.itemCount;
+    const { page, pages } = this.mat;
+    let status: string;
+    if (this.stepMode) {
+      const item = this.kit?.items[this.step];
+      status = `Step ${item?.step ?? this.step + 1} of ${count} · ${item?.name ?? ''}`;
+    } else if (pages > 1) {
+      status = `Page ${page + 1} of ${pages} · ${this.kit?.title ?? ''}`;
+    } else {
+      status = `All ${count} items · ${this.kit?.title ?? ''}`;
+    }
+    this.panel.setState({
+      opacity: this.opacityTarget,
+      stepMode: this.stepMode,
+      canPrev: this.stepMode ? this.step > 0 : page > 0,
+      canNext: this.stepMode ? this.step < count - 1 : page < pages - 1,
+      status,
+    });
   }
 
   /** Locks the mat to the table with an anchor (kept across sessions when supported). */
@@ -358,6 +456,7 @@ export class MatExperience {
     this.restoreWaited = 0;
     this.savedHandle = saved.handle;
     this.mat.build(saved.width, saved.depth);
+    this.panel.group.visible = false;
     this.hint.show('Finding your last mat…', 'Look at the table where you left it.');
     session.restorePersistentAnchor(saved.handle).then(
       (anchor) => {
