@@ -6,6 +6,8 @@ import { computeCover, createCoverRect, type CoverRect } from '../lib/coverMappi
 import type { HandPose } from '../lib/handPose';
 import type { TrackingState } from '../lib/tracking';
 
+/** Typical adult wrist → middle-knuckle distance, in metres. */
+const REAL_PALM_LENGTH = 0.09;
 /** Depth of the plane, in front of the camera, on which the hand is placed. */
 const PLANE_DEPTH = 0.5;
 /** Vertical field of view of a typical 16:9 laptop webcam (~65° horizontal). */
@@ -23,6 +25,12 @@ interface Projection {
 interface WebcamPoseSourceProps {
   tracking: RefObject<TrackingState>;
   pose: RefObject<HandPose>;
+  /**
+   * Lift from the joints to the skin, for a 9 cm palm, in metres: 0 on the
+   * camera picture (the landmarks are already on the skin), more when the
+   * hand is drawn as a mesh whose palm surface sits above its bones.
+   */
+  surfaceOffset?: number;
 }
 
 /**
@@ -31,7 +39,7 @@ interface WebcamPoseSourceProps {
  * Runs before the renderers each frame (negative priority); with on-demand
  * rendering that is once per detected camera frame.
  */
-export function WebcamPoseSource({ tracking, pose }: WebcamPoseSourceProps) {
+export function WebcamPoseSource({ tracking, pose, surfaceOffset = 0 }: WebcamPoseSourceProps) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
   const scratch = useMemo(
@@ -76,6 +84,7 @@ export function WebcamPoseSource({ tracking, pose }: WebcamPoseSourceProps) {
       for (let i = 0; i < landmarks.length; i++) landmarkToWorld(out.joints[i], landmarks[i], p);
       out.version++;
     }
+    out.surfaceOffset = (surfaceOffset * out.joints[0].distanceTo(out.joints[9])) / REAL_PALM_LENGTH;
     out.frameId = state.frameId;
   }, -1);
 

@@ -513,3 +513,32 @@ button {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+.hud-segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+}
+
+.hud-segmented button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.hud-segmented button.is-selected {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(20, 30, 25, 0.12);
+}
+
+.hud-segmented button:focus-visible {
+  outline: 2px solid var(--mint-strong);
+  outline-offset: 1px;
+}

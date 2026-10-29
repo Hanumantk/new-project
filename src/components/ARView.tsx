@@ -48,6 +48,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
   const [delegate, setDelegate] = useState<Delegate | null>(null);
   const [debug, setDebug] = useState(false);
   const [woundOpacity, setWoundOpacity] = useState(loadWoundOpacity);
+  const [view, setView] = useState<'camera' | 'mesh'>('camera');
+  useEffect(() => invalidateRef.current?.(), [view]);
   const woundOpacityRef = useRef(woundOpacity);
 
   // The scene reads the opacity from a ref; redraw so a change shows at once.
@@ -358,6 +360,7 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
             onReady={onSceneReady}
             debug={debug}
             woundOpacity={woundOpacityRef}
+            view={view}
           />
         </div>
         <canvas ref={debugCanvasRef} className="layer debug" />
@@ -372,6 +375,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
         onToggleDebug={() => setDebug((v) => !v)}
         woundOpacity={woundOpacity}
         onWoundOpacityChange={setWoundOpacity}
+        view={view}
+        onViewChange={setView}
         onStop={onStop}
       />
 

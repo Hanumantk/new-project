@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { computeCover, createCoverRect } from '../lib/coverMapping';
 import { LAYER_DEBUG, LAYER_MAIN, LAYER_OCCLUDER, LAYER_WOUND } from '../lib/layers';
 import { BASE_AMBIENT, BASE_DIRECTIONAL, lightingFromSkin, type SkinLighting } from '../lib/skinLighting';
+import { createSkinSample } from '../lib/skinSampler';
 import type { TrackingState } from '../lib/tracking';
 
 /** Blur of the wound layer, in camera pixels: never sharper than the video. */
@@ -65,7 +66,14 @@ interface WebcamCompositorProps {
   tracking: RefObject<TrackingState>;
   lighting: RefObject<SkinLighting>;
   debug: boolean;
+  /**
+   * Match the camera (lights from the real skin, sensor grain). Off in the
+   * mesh view, where there's no camera picture to match.
+   */
+  matchCamera?: boolean;
 }
+
+const NO_SKIN_READING = createSkinSample();
 
 /**
  * Renders the webcam scene so the wound matches the camera: lights follow
@@ -73,7 +81,7 @@ interface WebcamCompositorProps {
  * the camera's grain, then laid over the picture (the bruise is multiplied
  * into the picture in the main pass, so real skin shows through it).
  */
-export function WebcamCompositor({ tracking, lighting, debug }: WebcamCompositorProps) {
+export function WebcamCompositor({ tracking, lighting, debug, matchCamera = true }: WebcamCompositorProps) {
   const gl = useThree((s) => s.gl);
   const size = useThree((s) => s.size);
   const ambientRef = useRef<THREE.AmbientLight>(null);
@@ -138,7 +146,7 @@ export function WebcamCompositor({ tracking, lighting, debug }: WebcamCompositor
     const ambient = ambientRef.current;
     const directional = directionalRef.current;
     if (!state || !light || !ambient || !directional) return;
-    lightingFromSkin(state.skin, light);
+    lightingFromSkin(matchCamera ? state.skin : NO_SKIN_READING, light);
     ambient.color.setRGB(...light.cast);
     directional.color.setRGB(...light.cast);
     ambient.intensity = BASE_AMBIENT * light.exposure;
@@ -165,7 +173,7 @@ export function WebcamCompositor({ tracking, lighting, debug }: WebcamCompositor
     const step = BLUR_CAMERA_PX * cameraPx * Math.SQRT2;
     u.blurStep.value.set(step / width, step / height);
     const noise = THREE.MathUtils.clamp(tracked?.skin.noise ?? 0.01, MIN_GRAIN, MAX_GRAIN);
-    u.grain.value = noise * Math.sqrt(12); // uniform noise with that standard deviation
+    u.grain.value = matchCamera ? noise * Math.sqrt(12) : 0; // uniform noise with that standard deviation
     u.grainCell.value = Math.max(cameraPx, 1);
     u.seed.value = ((tracked?.frameId ?? 0) % 997) * 0.731;
 

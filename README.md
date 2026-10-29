@@ -37,6 +37,17 @@ the frame-sync readout: the latest camera frame, the frame the wound pose and
 the background were drawn from, and a count of renders where they differed.
 The HUD always shows the render FPS and the mean detection time.
 
+### Mesh view
+
+The **Camera | Mesh** switch in the HUD works like the map / satellite switch
+in a maps app. **Camera** is the real picture. **Mesh** hides the camera image
+behind a plain light backdrop and redraws your tracked hand as a grayscale 3D
+mesh (flat-shaded faces with the wireframe on top), with the wound on its
+palm. The mesh is posed live from the same 21 landmarks as the wound, so it
+follows your hand. It is a generic hand model fitted to your hand's joints
+and size, not a scan of your hand, so it won't show your exact skin, creases
+or finger thickness.
+
 ## Meta Quest 3 (mixed reality)
 
 The AR experience (your real room through passthrough, with the wound on
@@ -83,7 +94,8 @@ headset.
 | Start screen / error screen, `?video=` test mode | `src/App.tsx` |
 | Camera or test video, frame capture, detection loop, HUD stats | `src/components/ARView.tsx` |
 | One canvas: background, wound, compositor (on-demand rendering) | `src/components/ARScene.tsx` |
-| Captured frame as the full-screen background | `src/components/VideoBackground.tsx` |
+| Captured frame as the full-screen background (or the plain mesh-view backdrop) | `src/components/VideoBackground.tsx` |
+| Mesh view: grayscale hand mesh posed from the landmarks | `src/components/HandMeshView.tsx`, `src/lib/handRig.ts` |
 | Lights from the skin, wound pass, camera-matching post pass | `src/components/WebcamCompositor.tsx` |
 | Wound and bruise materials, angle fade, occlusion | `src/components/PalmInjury.tsx` |
 | Palm-conforming 32×32 mesh with fixed palm-space UVs | `src/lib/palmMesh.ts` |
@@ -135,6 +147,12 @@ headset.
 - **Closed hand.** When the fingertips come in towards the wrist (openness
   below 1.15, back above 1.3) the wound fades out over 200 ms and the status
   pill says "Open your hand".
+- **Mesh view.** The skinned "generic hand" from the WebXR input profiles
+  (`public/models/`, MIT licence, see `LICENSE-generic-hand.md`) is posed
+  bone by bone: each bone's direction comes from its landmark and the next
+  one, its roll from the back-of-hand direction, and the whole model is scaled
+  to your palm length. In this view the wound is lifted onto the model's palm
+  surface and skin and camera matching are switched off.
 - **Performance.** Detection runs once per new camera frame; all per-frame
   maths reuses preallocated objects and buffers; per-frame data lives in refs
   (no React renders) and the HUD updates twice a second. **Stop** cancels the

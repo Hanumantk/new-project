@@ -34,6 +34,9 @@ interface HudProps {
   /** Wound opacity, 0..1. */
   woundOpacity: number;
   onWoundOpacityChange: (value: number) => void;
+  /** Camera picture, or the hand as a grayscale mesh. */
+  view: 'camera' | 'mesh';
+  onViewChange: (view: 'camera' | 'mesh') => void;
   onStop: () => void;
 }
 
@@ -46,6 +49,8 @@ export function Hud({
   onToggleDebug,
   woundOpacity,
   onWoundOpacityChange,
+  view,
+  onViewChange,
   onStop,
 }: HudProps) {
   return (
@@ -78,6 +83,20 @@ export function Hud({
           </span>
         </div>
       )}
+      <div className="panel hud-segmented" role="radiogroup" aria-label="View">
+        {(['camera', 'mesh'] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={view === option}
+            className={view === option ? 'is-selected' : ''}
+            onClick={() => onViewChange(option)}
+          >
+            {option === 'camera' ? 'Camera' : 'Mesh'}
+          </button>
+        ))}
+      </div>
       <OpacitySlider value={woundOpacity} onChange={onWoundOpacityChange} />
       <div className="hud-actions">
         <button type="button" className="panel button" aria-pressed={debug} onClick={onToggleDebug}>
