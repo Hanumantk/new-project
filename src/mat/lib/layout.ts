@@ -16,10 +16,14 @@ export const LAYOUT = {
   gutter: 0.02,
   /** Space between rows. */
   rowGap: 0.015,
-  /** Strip in front of each footprint where its label stands. */
-  labelDepth: 0.045,
+  /**
+   * Strip in front of each footprint where its label stands. Deep enough
+   * that a label leaning back towards the user's eyes stays clear of the
+   * outline behind it.
+   */
+  labelDepth: 0.06,
   /** A cell is at least this wide so its label has room. */
-  minCellWidth: 0.1,
+  minCellWidth: 0.12,
   /** Space between a footprint and its quantity model. */
   visualGap: 0.012,
 };
@@ -126,7 +130,7 @@ export function layoutKit(items: LayoutItem[], matWidth: number, matDepth: numbe
           visualX: item.visual ? left + fw + LAYOUT.visualGap + item.visual.width / 2 : left,
           visualZ: footprintZ,
           labelX: left,
-          labelZ: back + contentDepth + LAYOUT.labelDepth * 0.8,
+          labelZ: back + contentDepth + LAYOUT.labelDepth * 0.92,
           oversize: cell.width > innerWidth + 1e-9 || cell.depth > innerDepth + 1e-9,
         });
         left += cell.width + LAYOUT.gutter;

@@ -11,6 +11,8 @@ export const FONTS = {
 /** Colours chosen to read over passthrough: off-white text on a soft dark halo, mint accent. */
 export const COLORS = {
   label: '#f4f3ee',
+  /** Item names: off-white, a step quieter than the quantity. */
+  name: '#e2e8e4',
   muted: '#cfd8d2',
   mint: '#8eddb0',
   ink: '#0e1512',

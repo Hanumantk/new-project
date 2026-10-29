@@ -12,6 +12,7 @@ const LABEL_LIFT = 0.004;
 const BADGE_RADIUS = 0.0075;
 const TEXT_GAP = 0.0025;
 const SIZES = { name: 0.0095, quantity: 0.0135, purpose: 0.016, badge: 0.0095 };
+const ACTIVE_LABEL_SCALE = 1.2;
 
 /** Geometry shared by every slot with the same footprint (and across rebuilds). */
 const geometryCache = new Map<string, { dashed: THREE.BufferGeometry; solid: THREE.BufferGeometry; fill: THREE.BufferGeometry }>();
@@ -99,7 +100,7 @@ export class SlotView {
     });
     this.badgeText.position.z = 0.0005;
     this.badge.add(this.badgeText);
-    this.name = makeText(item.name, { size: SIZES.name, color: COLORS.muted, anchorY: 'bottom' });
+    this.name = makeText(item.name, { size: SIZES.name, color: COLORS.name, anchorY: 'bottom' });
     this.quantity = makeText(item.quantity, { size: SIZES.quantity, weight: 'bold', anchorY: 'bottom' });
     this.purpose = makeText(item.purpose, { size: SIZES.purpose, weight: 'bold', color: COLORS.mint, anchorY: 'bottom' });
     this.purpose.visible = false;
@@ -138,6 +139,8 @@ export class SlotView {
     this.solid.visible = active;
     this.dashed.visible = !active;
     this.purpose.visible = showPurpose;
+    // The current step's label stands out a little larger.
+    this.label.scale.setScalar(active ? ACTIVE_LABEL_SCALE : 1);
     this.stackLabel();
     this.applyAlpha();
   }
