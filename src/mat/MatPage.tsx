@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { loadSavedMat, type SavedMat } from './lib/matStore';
 import { MatExperience } from './xr/MatExperience';
 import { checkARSupport, describeError, MAT_SESSION_INIT, type ARSupport } from './xr/session';
 
@@ -13,6 +14,7 @@ export function MatPage() {
   const [support, setSupport] = useState<ARSupport>('checking');
   const [inSession, setInSession] = useState(false);
   const [error, setError] = useState<{ message: string; detail: string } | null>(null);
+  const [savedMat, setSavedMat] = useState<SavedMat | null>(loadSavedMat);
   const experienceRef = useRef<MatExperience | null>(null);
 
   useEffect(() => {
@@ -25,7 +27,7 @@ export function MatPage() {
     };
   }, []);
 
-  const enter = async () => {
+  const enter = async (restore: SavedMat | null) => {
     const xr = navigator.xr;
     if (!xr) return;
     setError(null);
@@ -41,10 +43,13 @@ export function MatPage() {
       });
       return;
     }
-    const experience = (experienceRef.current ??= new MatExperience({ onEnd: () => setInSession(false) }));
+    const experience = (experienceRef.current ??= new MatExperience({
+      onEnd: () => setInSession(false),
+      onSavedMatChange: setSavedMat,
+    }));
     try {
       setInSession(true);
-      await experience.start(session);
+      await experience.start(session, { restore });
     } catch (err) {
       console.error(err);
       setInSession(false);
@@ -74,9 +79,16 @@ export function MatPage() {
         ) : support === 'checking' ? (
           <p className="mat-note">Checking for passthrough AR…</p>
         ) : support === 'supported' ? (
-          <button type="button" className="button button--primary" onClick={enter}>
-            Enter AR
-          </button>
+          <div className="mat-actions">
+            <button type="button" className="button button--primary" onClick={() => enter(null)}>
+              Enter AR
+            </button>
+            {savedMat && (
+              <button type="button" className="panel button" onClick={() => enter(savedMat)}>
+                Restore last mat ({Math.round(savedMat.width * 100)} × {Math.round(savedMat.depth * 100)} cm)
+              </button>
+            )}
+          </div>
         ) : (
           <Unsupported support={support} />
         )}
