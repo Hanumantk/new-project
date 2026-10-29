@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Text } from 'troika-three-text';
 import { pokeSliderValue, type PokeSliderLayout } from '../../lib/pokeSlider';
+import type { GrabState } from '../../lib/grab';
 import { PokeButton, POKE_HOVER } from '../lib/poke';
 import type { HandState } from './hands';
 import { COLORS, hex, makeText, setTextContent } from './text';
@@ -8,6 +9,8 @@ import { COLORS, hex, makeText, setTextContent } from './text';
 /** Panel size (m). */
 const WIDTH = 0.3;
 const HEIGHT = 0.14;
+/** The panel's size (m), for grabbing it. */
+export const PANEL_SIZE = { width: WIDTH, height: HEIGHT };
 const BUTTON = { width: 0.064, height: 0.036, gap: 0.008, y: -0.034 };
 const SLIDER_Y = 0.016;
 const SLIDER: PokeSliderLayout = {
@@ -76,6 +79,12 @@ const MINT = new THREE.Color(COLORS.mint);
 const WARN = new THREE.Color(COLORS.warn);
 const WHITE = new THREE.Color('#ffffff');
 const INK_TEXT = hex(COLORS.ink);
+/** Backing colour and opacity: normal, with a hand on it, and while it's carried. */
+const BACKING = {
+  none: { color: new THREE.Color(COLORS.ink), opacity: 0.5 },
+  hover: { color: new THREE.Color('#1f3a2e'), opacity: 0.62 },
+  held: { color: new THREE.Color('#2b5240'), opacity: 0.72 },
+};
 const LABEL_TEXT = hex(COLORS.label);
 
 /**
@@ -85,6 +94,7 @@ const LABEL_TEXT = hex(COLORS.label);
  */
 export class ControlPanel {
   readonly group = new THREE.Group();
+  private readonly backing: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private readonly buttons: ButtonView[];
   private readonly status: Text;
   private readonly valueText: Text;
@@ -98,6 +108,7 @@ export class ControlPanel {
     this.group.rotation.order = 'YXZ';
     const backing = new THREE.Mesh(roundedRect(WIDTH, HEIGHT, 0.014), material(COLORS.ink, 0.5));
     backing.renderOrder = 40;
+    this.backing = backing;
 
     this.status = makeText('', { size: 0.0105, color: COLORS.muted, anchorY: 'middle', maxWidth: WIDTH - 0.03, halo: false });
     this.status.position.set(-WIDTH / 2 + 0.014, HEIGHT / 2 - 0.016, 0.001);
@@ -151,6 +162,12 @@ export class ControlPanel {
   placeFor(width: number, depth: number) {
     this.group.position.set(width / 2 + 0.12, 0.045, depth / 2 + 0.03);
     this.group.rotation.set(-THREE.MathUtils.degToRad(50), -THREE.MathUtils.degToRad(25), 0);
+  }
+
+  /** Lights the backing up while a hand is on it or carrying it. */
+  setGrabState(state: GrabState) {
+    this.backing.material.color.copy(BACKING[state].color);
+    this.backing.material.opacity = BACKING[state].opacity;
   }
 
   setState(state: PanelState) {

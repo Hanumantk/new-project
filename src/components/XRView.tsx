@@ -220,6 +220,10 @@ export function XRView({ onExit }: XRViewProps) {
               In the headset, press and slide the “Wound opacity” panel below-left of your view with a
               fingertip.
             </p>
+            <p className="xr-note">
+              To move a panel or the material mat, put your hand on it (or point your hand at it) and make
+              a fist: it follows your fist until you open your hand.
+            </p>
             {mode === 'ar' && kitResult?.ok && (
               <p className="xr-note">
                 To lay out your materials, pinch and trace a rectangle on your table: each item gets a

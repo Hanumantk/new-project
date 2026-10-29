@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
+import type { GrabSystem } from '../lib/grab';
 import type { Kit } from './lib/kit';
 import { loadSavedMat } from './lib/matStore';
 import { MatSystem } from './xr/MatSystem';
@@ -11,6 +12,8 @@ interface MaterialMatProps {
   kit: Kit | null;
   /** Receives the system so the page can drive it (the ?test shortcut). */
   onSystem?: (system: MatSystem | null) => void;
+  /** The mat and its control panel can be carried with a fist. */
+  grab: GrabSystem;
 }
 
 /**
@@ -19,9 +22,14 @@ interface MaterialMatProps {
  * out on it, next to the wound on your palm. A mat saved last time is
  * restored automatically.
  */
-export function MaterialMat({ active, kit, onSystem }: MaterialMatProps) {
+export function MaterialMat({ active, kit, onSystem, grab }: MaterialMatProps) {
   const gl = useThree((s) => s.gl);
   const system = useMemo(() => new MatSystem(), []);
+
+  useEffect(() => {
+    const removers = system.grabbables.map((target) => grab.add(target));
+    return () => removers.forEach((remove) => remove());
+  }, [grab, system]);
 
   useEffect(() => {
     onSystem?.(system);

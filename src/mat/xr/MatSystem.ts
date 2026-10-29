@@ -1,12 +1,13 @@
 import * as THREE from 'three';
+import type { Grabbable, GrabState } from '../../lib/grab';
 import type { Kit } from '../lib/kit';
-import { clearSavedMat, loadOpacity, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
+import { clearSavedMat, loadOpacity, loadSavedMat, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
 import { PalmUpToggle } from '../lib/palmUp';
 import { PinchDetector } from '../lib/pinch';
 import { fitRectangle, isBigEnough, orientToViewer, type MatPlacement } from '../lib/rectFit';
 import { StrokeBuffer } from '../lib/stroke';
 import { medianY, pointInPolygon, surfaceFromPen } from '../lib/surface';
-import { ControlPanel, type PanelButton } from './ControlPanel';
+import { ControlPanel, PANEL_SIZE, type PanelButton } from './ControlPanel';
 import { HandTracker, type HandState } from './hands';
 import { HintBoard } from './HintBoard';
 import { MatView } from './MatView';
@@ -49,6 +50,12 @@ const DRAW_TITLE = 'Lay out your materials';
 const DRAW_DETAIL = 'Pinch thumb and index on your table, trace a rectangle (at least 25 × 20 cm), then let go.';
 
 const cm = (m: number) => Math.round(m * 100);
+/** Dropped over a detected table this much higher or lower (m), the mat settles onto it. */
+const RETABLE_RANGE = 0.5;
+
+const matWorld = new THREE.Matrix4();
+const matInverse = new THREE.Matrix4();
+const panelLocal = new THREE.Matrix4();
 
 /**
  * The material mat, inside the injury simulation's mixed-reality session:
@@ -91,6 +98,15 @@ export class MatSystem {
   /** Bumped on every redraw so late anchor promises from an old mat are ignored. */
   private generation = 0;
   private testTraceRequested = false;
+  /** The mat is being carried: its anchor doesn't move it. */
+  private moving = false;
+  /** It was put down: anchor it where it is, next frame. */
+  private reanchorRequested = false;
+  /** The panel's pose relative to the mat, once moved by hand (else its default place). */
+  private panelPose: number[] | null = null;
+  private panelHeld = false;
+  /** The mat and its control panel, to move with a fist (see GrabSystem). */
+  readonly grabbables: Grabbable[];
 
   private readonly head = new THREE.Vector3();
   private readonly headMatrix = new THREE.Matrix4();
@@ -105,6 +121,7 @@ export class MatSystem {
     });
     this.mat.root.add(this.panel.group);
     this.handList = [this.hands.left, this.hands.right];
+    this.grabbables = [this.matGrabbable(), this.panelGrabbable()];
     this.root.add(this.hint.group, this.strokeView.group, this.mat.root);
     this.root.visible = false;
     if (import.meta.env.DEV) (window as unknown as { __mat?: MatSystem }).__mat = this;
@@ -168,6 +185,9 @@ export class MatSystem {
 
   private resetToDraw() {
     this.generation++;
+    this.moving = false;
+    this.reanchorRequested = false;
+    this.panelPose = null;
     this.phase = 'draw';
     this.stepMode = false;
     this.pen = null;
@@ -221,7 +241,8 @@ export class MatSystem {
         }
         break;
       case 'placed':
-        this.trackAnchor(frame, space);
+        if (this.reanchorRequested) this.reanchor(frame, space);
+        if (!this.moving) this.trackAnchor(frame, space);
         this.updateControls(dt);
         break;
     }
@@ -343,7 +364,7 @@ export class MatSystem {
       return;
     }
     this.showMat(placement, y);
-    this.anchorMat(frame, space, placement, y);
+    this.anchorMat(frame, space, placement.cx, y, placement.cz, placement.yaw);
     this.hint.show(
       `Mat placed · ${cm(placement.width)} × ${cm(placement.depth)} cm`,
       'Put each item on its outline.',
@@ -361,6 +382,10 @@ export class MatSystem {
 
   private showControls() {
     this.panel.placeFor(this.mat.width, this.mat.depth);
+    if (this.panelPose) {
+      panelLocal.fromArray(this.panelPose);
+      panelLocal.decompose(this.panel.group.position, this.panel.group.quaternion, this.panel.group.scale);
+    }
     this.panel.group.visible = true;
     this.refreshPanel();
   }
@@ -376,7 +401,7 @@ export class MatSystem {
       if (!this.panel.group.visible) this.hint.show('Controls hidden', 'Turn your left palm up again to bring them back.', 3);
       else this.hint.hide();
     }
-    if (this.panel.group.visible) this.panel.update(dt, this.handList);
+    if (this.panel.group.visible && !this.panelHeld) this.panel.update(dt, this.handList);
     if (this.opacityShown !== this.opacityTarget) {
       this.opacityShown += (this.opacityTarget - this.opacityShown) * (1 - Math.exp(-OPACITY_RATE * dt));
       if (Math.abs(this.opacityShown - this.opacityTarget) < 0.003) this.opacityShown = this.opacityTarget;
@@ -434,14 +459,11 @@ export class MatSystem {
   }
 
   /** Locks the mat to the table with an anchor (kept across sessions when supported). */
-  private anchorMat(frame: XRFrame, space: XRReferenceSpace, placement: MatPlacement, y: number) {
+  private anchorMat(frame: XRFrame, space: XRReferenceSpace, x: number, y: number, z: number, yaw: number) {
     if (!frame.createAnchor) return; // No anchors: the mat stays at its reference-space pose.
     const generation = this.generation;
-    const half = placement.yaw / 2;
-    const pose = new XRRigidTransform(
-      { x: placement.cx, y, z: placement.cz, w: 1 },
-      { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) },
-    );
+    const half = yaw / 2;
+    const pose = new XRRigidTransform({ x, y, z, w: 1 }, { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
     const request = frame.createAnchor(pose, space);
     if (!request) return;
     request.then(
@@ -451,7 +473,7 @@ export class MatSystem {
           return;
         }
         this.anchor = anchor;
-        this.persist(anchor, placement.width, placement.depth);
+        this.persist(anchor, this.mat.width, this.mat.depth);
       },
       (err: unknown) => console.warn('Anchor not created; the mat keeps its first pose.', err),
     );
@@ -466,7 +488,7 @@ export class MatSystem {
         if (generation !== this.generation) return;
         if (previous && previous !== handle) void this.session?.deletePersistentAnchor?.(previous).catch(() => {});
         this.savedHandle = handle;
-        const saved = { handle, width, depth, savedAt: Date.now() };
+        const saved = { handle, width, depth, savedAt: Date.now(), panel: this.panelPose ?? undefined };
         saveMat(saved);
         this.events.onSavedMatChange?.(saved);
       },
@@ -483,6 +505,7 @@ export class MatSystem {
     this.phase = 'restoring';
     this.restoreWaited = 0;
     this.savedHandle = saved.handle;
+    this.panelPose = saved.panel ?? null;
     this.mat.build(saved.width, saved.depth);
     this.panel.group.visible = false;
     this.hint.show('Finding your last mat…', 'Look at the table where you left it.');
@@ -503,6 +526,100 @@ export class MatSystem {
     this.anchor = null;
     this.resetToDraw();
     this.hint.show('Couldn’t find your last mat here', 'Pinch and trace a new one.', DRAW_HINT_TIME, 'warn');
+  }
+
+  /**
+   * After the mat is put down: settle it onto a detected table if it was
+   * carried over one, and anchor it there in place of the old anchor.
+   */
+  private reanchor(frame: XRFrame, space: XRReferenceSpace) {
+    this.reanchorRequested = false;
+    const e = this.mat.root.matrix.elements;
+    const x = e[12];
+    const z = e[14];
+    const yaw = Math.atan2(e[8], e[10]);
+    let y = e[13];
+    let best = RETABLE_RANGE;
+    for (const plane of detectedHorizontalPlanes(frame, space)) {
+      const dy = Math.abs(plane.y - e[13]);
+      if (dy < best && pointInPolygon(x, z, plane.polygon)) {
+        best = dy;
+        y = plane.y;
+      }
+    }
+    this.mat.setPose(x, y, z, yaw);
+    this.anchor?.delete();
+    this.anchor = null;
+    this.anchorMat(frame, space, x, y, z, yaw);
+  }
+
+  /** The whole mat: put a fist on it to slide and turn it on the table. */
+  private matGrabbable(): Grabbable {
+    const bounds = new THREE.Box3();
+    return {
+      bounds,
+      style: 'table',
+      canGrab: () => {
+        if (this.phase !== 'placed' || !this.mat.root.visible) return false;
+        // A hand on the mat, up to a fist's height above it.
+        bounds.min.set(-this.mat.width / 2, -0.03, -this.mat.depth / 2);
+        bounds.max.set(this.mat.width / 2, 0.15, this.mat.depth / 2);
+        return true;
+      },
+      worldMatrix: (out) => {
+        this.mat.root.updateMatrixWorld();
+        out.copy(this.mat.root.matrixWorld);
+      },
+      begin: () => {
+        this.moving = true;
+      },
+      move: (world) => this.mat.setMatrix(world.elements),
+      end: () => {
+        this.moving = false;
+        this.reanchorRequested = true;
+      },
+      setGrabState: (state: GrabState) => this.mat.setGrabState(state),
+    };
+  }
+
+  /** The control panel: carry it anywhere; it stays put relative to the mat. */
+  private panelGrabbable(): Grabbable {
+    const group = this.panel.group;
+    return {
+      bounds: new THREE.Box3(
+        new THREE.Vector3(-PANEL_SIZE.width / 2, -PANEL_SIZE.height / 2, -0.03),
+        new THREE.Vector3(PANEL_SIZE.width / 2, PANEL_SIZE.height / 2, 0.03),
+      ),
+      style: 'panel',
+      canGrab: () => this.phase === 'placed' && this.mat.root.visible && group.visible,
+      worldMatrix: (out) => {
+        group.updateWorldMatrix(true, false);
+        out.copy(group.matrixWorld);
+      },
+      begin: () => {
+        this.panelHeld = true;
+      },
+      move: (world) => {
+        this.mat.root.updateMatrixWorld();
+        matInverse.copy(this.mat.root.matrixWorld).invert();
+        matWorld.multiplyMatrices(matInverse, world);
+        matWorld.decompose(group.position, group.quaternion, group.scale);
+      },
+      end: () => {
+        this.panelHeld = false;
+        group.updateMatrix();
+        this.panelPose = group.matrix.toArray();
+        this.savePanel();
+      },
+      setGrabState: (state: GrabState) => this.panel.setGrabState(state),
+    };
+  }
+
+  /** Remembers where the panel was moved, with the saved mat. */
+  private savePanel() {
+    const saved = loadSavedMat();
+    if (!saved || saved.handle !== this.savedHandle) return;
+    saveMat({ ...saved, panel: this.panelPose ?? undefined });
   }
 
   /** Moves the mat to its anchor's latest pose. Returns whether the anchor is tracked. */
