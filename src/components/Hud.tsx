@@ -30,10 +30,24 @@ interface HudProps {
   source: string | null;
   debug: boolean;
   onToggleDebug: () => void;
+  /** Wound opacity, 0..1. */
+  woundOpacity: number;
+  onWoundOpacityChange: (value: number) => void;
   onStop: () => void;
 }
 
-export function Hud({ handStatus, stats, delegate, source, debug, onToggleDebug, onStop }: HudProps) {
+export function Hud({
+  handStatus,
+  stats,
+  delegate,
+  source,
+  debug,
+  onToggleDebug,
+  woundOpacity,
+  onWoundOpacityChange,
+  onStop,
+}: HudProps) {
+  const percent = Math.round(woundOpacity * 100);
   return (
     <div className="hud">
       <div className="panel hud-status">
@@ -64,6 +78,18 @@ export function Hud({ handStatus, stats, delegate, source, debug, onToggleDebug,
           </span>
         </div>
       )}
+      <label className="panel hud-slider">
+        <span>Wound opacity</span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={percent}
+          onChange={(event) => onWoundOpacityChange(Number(event.target.value) / 100)}
+        />
+        <output>{percent}%</output>
+      </label>
       <div className="hud-actions">
         <button type="button" className="panel button" aria-pressed={debug} onClick={onToggleDebug}>
           Debug

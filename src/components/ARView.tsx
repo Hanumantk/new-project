@@ -46,6 +46,15 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
   const [stats, setStats] = useState<HudStats | null>(null);
   const [delegate, setDelegate] = useState<Delegate | null>(null);
   const [debug, setDebug] = useState(false);
+  const [woundOpacity, setWoundOpacity] = useState(loadWoundOpacity);
+  const woundOpacityRef = useRef(woundOpacity);
+
+  // The scene reads the opacity from a ref; redraw so a change shows at once.
+  useEffect(() => {
+    woundOpacityRef.current = woundOpacity;
+    invalidateRef.current?.();
+    saveWoundOpacity(woundOpacity);
+  }, [woundOpacity]);
 
   useEffect(() => {
     debugRef.current = debug;
@@ -343,7 +352,12 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
         {/* Only a frame source: the scene draws the frames it detected on. */}
         <video ref={videoRef} className="layer video source-video" autoPlay playsInline muted />
         <div className="layer">
-          <ARScene tracking={trackingRef} onReady={onSceneReady} debug={debug} />
+          <ARScene
+            tracking={trackingRef}
+            onReady={onSceneReady}
+            debug={debug}
+            woundOpacity={woundOpacityRef}
+          />
         </div>
         <canvas ref={debugCanvasRef} className="layer debug" />
       </div>
@@ -355,6 +369,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
         source={sampleVideo ? 'Sample video' : null}
         debug={debug}
         onToggleDebug={() => setDebug((v) => !v)}
+        woundOpacity={woundOpacity}
+        onWoundOpacityChange={setWoundOpacity}
         onStop={onStop}
       />
 
@@ -366,6 +382,28 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
       )}
     </div>
   );
+}
+
+const WOUND_OPACITY_KEY = 'palm-injury:wound-opacity';
+
+/** The last opacity this viewer chose (a per-browser convenience), else 100%. */
+function loadWoundOpacity(): number {
+  try {
+    const saved = window.localStorage.getItem(WOUND_OPACITY_KEY);
+    const value = saved === null ? NaN : Number(saved);
+    if (value >= 0 && value <= 1) return value;
+  } catch {
+    // storage unavailable (private mode, blocked): use the default
+  }
+  return 1;
+}
+
+function saveWoundOpacity(value: number) {
+  try {
+    window.localStorage.setItem(WOUND_OPACITY_KEY, String(value));
+  } catch {
+    // not remembered; fine
+  }
 }
 
 function stopStream(stream: MediaStream) {
