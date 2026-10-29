@@ -14,6 +14,8 @@ interface ARSceneProps {
   onReady: (invalidate: () => void) => void;
   /** Show the palm grid as a wireframe. */
   debug?: boolean;
+  /** Wound opacity set in the HUD, 0..1. */
+  woundOpacity: RefObject<number>;
 }
 
 /**
@@ -22,7 +24,7 @@ interface ARSceneProps {
  * shows one captured frame together with the pose detected on it.
  * Memoised so the HUD's updates never re-render the scene.
  */
-export const ARScene = memo(function ARScene({ tracking, onReady, debug = false }: ARSceneProps) {
+export const ARScene = memo(function ARScene({ tracking, onReady, debug = false, woundOpacity }: ARSceneProps) {
   const pose = useRef<HandPose>(createHandPose());
   const lighting = useRef<SkinLighting>(createSkinLighting());
   return (
@@ -35,7 +37,7 @@ export const ARScene = memo(function ARScene({ tracking, onReady, debug = false 
     >
       <WebcamPoseSource tracking={tracking} pose={pose} />
       <VideoBackground tracking={tracking} pose={pose} />
-      <PalmInjury pose={pose} composite lighting={lighting} debug={debug} />
+      <PalmInjury pose={pose} composite lighting={lighting} strength={woundOpacity} debug={debug} />
       <WebcamCompositor tracking={tracking} lighting={lighting} debug={debug} />
     </Canvas>
   );

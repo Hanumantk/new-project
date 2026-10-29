@@ -59,11 +59,20 @@ interface PalmInjuryProps {
   composite?: boolean;
   /** Light matching from the real skin (webcam mode). */
   lighting?: RefObject<SkinLighting>;
+  /** User-set wound opacity, 0..1 (scales the cut, blood and bruise together). */
+  strength?: RefObject<number>;
   /** Show the palm grid as a wireframe. */
   debug?: boolean;
 }
 
-export function PalmInjury({ pose, occlude = true, composite = false, lighting, debug = false }: PalmInjuryProps) {
+export function PalmInjury({
+  pose,
+  occlude = true,
+  composite = false,
+  lighting,
+  strength,
+  debug = false,
+}: PalmInjuryProps) {
   const gl = useThree((s) => s.gl);
   const camera = useThree((s) => s.camera);
   const [textures, setTextures] = useState<InjuryTextures | null>(null);
@@ -211,7 +220,7 @@ export function PalmInjury({ pose, occlude = true, composite = false, lighting, 
       Math.cos(THREE.MathUtils.degToRad(FADE_START_DEG)),
     );
 
-    const opacity = s.opacity * angleFade;
+    const opacity = s.opacity * angleFade * THREE.MathUtils.clamp(strength?.current ?? 1, 0, 1);
     if (tintMaterial instanceof THREE.ShaderMaterial) tintMaterial.uniforms.opacity.value = opacity;
     else tintMaterial.opacity = opacity;
     woundMaterial.opacity = opacity;
