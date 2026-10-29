@@ -7,7 +7,10 @@ import { FistDetector, fistRatio } from './fist';
  * you open your hand, where it stays.
  */
 
-/** 'table': slides and turns on its table, staying level and at its height. 'panel': follows the fist and turns to face you. */
+/**
+ * 'table': follows the fist in 3D and turns with it about the vertical,
+ * staying level (a mat). 'panel': follows the fist in 3D and turns to face you.
+ */
 export type GrabStyle = 'table' | 'panel';
 export type GrabState = 'none' | 'hover' | 'held';
 
@@ -219,12 +222,11 @@ export class GrabSystem {
     const entry = slot.held!;
     offset.subVectors(slot.startPos, slot.startGrip);
     if (entry.target.style === 'table') {
-      // Turn with the fist about the vertical, stay level and at table height.
+      // Follow the fist (up and down too) and turn with it about the vertical, staying level.
       const dyaw = wrapAngle(yawOf(forward) - slot.startYaw);
       yawQuat.setFromAxisAngle(UP, dyaw);
       offset.applyQuaternion(yawQuat);
       targetPos.addVectors(grip, offset);
-      targetPos.y = slot.startPos.y;
       targetQuat.multiplyQuaternions(yawQuat, slot.startQuat);
     } else {
       // Move with the fist and face the eyes.
