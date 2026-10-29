@@ -63,6 +63,19 @@ virtual hands in a simple room.
 The wound goes on your right hand when it's tracked, otherwise the left; a
 floating hint appears while no open hand is seen.
 
+**Wound opacity in the headset:** a small panel floats below-left of where
+you look when the session starts; press and slide along it with an index
+fingertip. The headset page has the same slider (live over Quest Link), and
+both remember the last value, as the webcam view's does.
+
+The wound itself is the same as in the webcam view (curved palm mesh,
+relief, cavity shading, wet-only gloss, feathered edges, angle fade, and the
+fade when fingers cover most of it). What can't carry over to passthrough:
+light and skin-tone matching and the camera-matching blur/grain need the
+camera's pixels, which WebXR doesn't give a page, and the bruise is laid
+over rather than multiplied, since passthrough is composited by the
+headset.
+
 ## How it works
 
 | Piece | File |

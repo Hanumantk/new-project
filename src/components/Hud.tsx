@@ -1,4 +1,5 @@
 import type { Delegate } from '../lib/handLandmarker';
+import { OpacitySlider } from './OpacitySlider';
 
 /** No hand / a closed hand (wound hidden) / an open hand (wound on the palm). */
 export type HandStatus = 'none' | 'closed' | 'open';
@@ -47,7 +48,6 @@ export function Hud({
   onWoundOpacityChange,
   onStop,
 }: HudProps) {
-  const percent = Math.round(woundOpacity * 100);
   return (
     <div className="hud">
       <div className="panel hud-status">
@@ -78,18 +78,7 @@ export function Hud({
           </span>
         </div>
       )}
-      <label className="panel hud-slider">
-        <span>Wound opacity</span>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={percent}
-          onChange={(event) => onWoundOpacityChange(Number(event.target.value) / 100)}
-        />
-        <output>{percent}%</output>
-      </label>
+      <OpacitySlider value={woundOpacity} onChange={onWoundOpacityChange} />
       <div className="hud-actions">
         <button type="button" className="panel button" aria-pressed={debug} onClick={onToggleDebug}>
           Debug

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { loadWoundOpacity, saveWoundOpacity } from '../lib/woundOpacity';
 import type * as THREE from 'three';
 import type { HandStatus } from './Hud';
+import { OpacitySlider } from './OpacitySlider';
 import { XRScene, type XRMode } from './XRScene';
 
 /** Used to drop the room to the floor when the runtime has no floor-level space. */
@@ -91,6 +93,13 @@ export function XRView({ onExit }: XRViewProps) {
   const [handStatus, setHandStatus] = useState<HandStatus>('none');
   const [error, setError] = useState<{ message: string; detail: string } | null>(null);
   const [floorY, setFloorY] = useState(0);
+  // Shared with the slider inside the headset; remembered like the webcam view's.
+  const [woundOpacity, setWoundOpacity] = useState(loadWoundOpacity);
+  const woundOpacityRef = useRef(woundOpacity);
+  useEffect(() => {
+    woundOpacityRef.current = woundOpacity;
+    saveWoundOpacity(woundOpacity);
+  }, [woundOpacity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,7 +160,14 @@ export function XRView({ onExit }: XRViewProps) {
   return (
     <div className="xr-root">
       <div className="xr-canvas">
-        <XRScene mode={mode} floorY={floorY} rendererRef={rendererRef} onHandStatus={setHandStatus} />
+        <XRScene
+          mode={mode}
+          floorY={floorY}
+          rendererRef={rendererRef}
+          onHandStatus={setHandStatus}
+          woundOpacity={woundOpacityRef}
+          onWoundOpacityChange={setWoundOpacity}
+        />
       </div>
 
       <div className="panel xr-card">
@@ -167,6 +183,11 @@ export function XRView({ onExit }: XRViewProps) {
               <span className="pill-dot" aria-hidden />
               {STATUS_LABEL[handStatus]}
             </span>
+            <OpacitySlider value={woundOpacity} onChange={setWoundOpacity} />
+            <p className="xr-note">
+              In the headset, press and slide the “Wound opacity” panel below-left of your view with a
+              fingertip.
+            </p>
             <button type="button" className="button button--primary" onClick={exitSession}>
               Exit headset
             </button>
@@ -191,6 +212,7 @@ export function XRView({ onExit }: XRViewProps) {
               Put on your headset, then start. The wound follows your palm using the headset’s own
               hand tracking — no webcam needed.
             </p>
+            <OpacitySlider value={woundOpacity} onChange={setWoundOpacity} />
             <div className="xr-actions">
               {support.ar && (
                 <button type="button" className="button button--primary" onClick={() => enter('ar')}>
