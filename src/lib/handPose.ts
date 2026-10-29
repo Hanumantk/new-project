@@ -18,6 +18,8 @@ export interface HandPose {
   surfaceOffset: number;
   /** Increments whenever `joints` change. */
   version: number;
+  /** The camera frame the joints came from (webcam mode), for sync checks. */
+  frameId: number;
 }
 
 export function createHandPose(): HandPose {
@@ -28,6 +30,7 @@ export function createHandPose(): HandPose {
     open: false,
     surfaceOffset: 0,
     version: 0,
+    frameId: -1,
   };
 }
 

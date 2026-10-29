@@ -183,6 +183,12 @@ button {
   display: block;
 }
 
+/* The camera is drawn by the scene; the element only supplies frames. */
+.source-video {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .debug {
   pointer-events: none;
 }

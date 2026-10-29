@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { HandLandmarker } from '@mediapipe/tasks-vision';
 import { createHandLandmarker, type Delegate } from '../lib/handLandmarker';
 import { computeCover, createCoverRect } from '../lib/coverMapping';
 import { drawLandmarks } from '../lib/drawLandmarks';
 import { CLOSED_HAND_SCORE, OPEN_HAND_SCORE } from '../lib/handPose';
+import { LandmarkFilter } from '../lib/oneEuroFilter';
 import { createTrackingState, handOpenness, type TrackingState } from '../lib/tracking';
 import { ARScene } from './ARScene';
 import { Hud, type HandStatus } from './Hud';
@@ -28,6 +29,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   const trackingRef = useRef<TrackingState>(createTrackingState());
   const showLandmarksRef = useRef(false);
+  const invalidateRef = useRef<(() => void) | null>(null);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
@@ -51,10 +53,18 @@ export function ARView({ onError, onStop }: ARViewProps) {
     const debugCanvas = debugCanvasRef.current!;
     const debugCtx = debugCanvas.getContext('2d')!;
     const tracking = trackingRef.current;
-    tracking.video = video;
+
+    // Each camera frame is copied here once; detection and the scene's
+    // background both use this copy, so they always agree on the frame.
+    const capture = document.createElement('canvas');
+    const captureCtx = capture.getContext('2d', { alpha: false })!;
+    tracking.frame = capture;
+    const landmarkFilter = new LandmarkFilter();
 
     let cancelled = false;
     let rafId = 0;
+    let videoFrameHandle = 0;
+    let watchdog = 0;
     let stream: MediaStream | null = null;
     let landmarker: HandLandmarker | null = null;
 
@@ -81,21 +91,27 @@ export function ARView({ onError, onStop }: ARViewProps) {
     let fpsFrames = 0;
     let fpsWindowStart = performance.now();
     let debugDirty = false;
+    let videoFramesSeen = 0;
 
-    const tick = () => {
-      rafId = requestAnimationFrame(tick);
-      if (!landmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-      // Only run inference when the camera has delivered a new frame.
-      if (video.currentTime === lastVideoTime) return;
-      lastVideoTime = video.currentTime;
+    /** Captures the current video frame, detects on it and requests one render. */
+    const processFrame = (now: number) => {
+      if (!landmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+        return;
+      }
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (capture.width !== width || capture.height !== height) {
+        capture.width = width;
+        capture.height = height;
+      }
+      captureCtx.drawImage(video, 0, 0, width, height);
 
-      const now = performance.now();
       const timestamp = Math.max(now, lastTimestamp + 1); // must strictly increase
       lastTimestamp = timestamp;
-      const result = landmarker.detectForVideo(video, timestamp);
+      const result = landmarker.detectForVideo(capture, timestamp);
 
-      const landmarks = result.landmarks[0] ?? null;
-      if (landmarks) {
+      const raw = result.landmarks[0] ?? null;
+      if (raw) {
         // We feed raw (unmirrored) camera frames; for those the label matches
         // the user's actual hand (verified against a known right-hand photo).
         const isRightHand = result.handedness[0]?.[0]?.categoryName === 'Right';
@@ -106,13 +122,17 @@ export function ARView({ onError, onStop }: ARViewProps) {
           if (++handednessVotes >= HANDEDNESS_HYSTERESIS) {
             tracking.isRightHand = isRightHand;
             handednessVotes = 0;
+            landmarkFilter.reset(); // a different hand: don't blend between them
           }
         } else {
           handednessVotes = 0;
         }
+      } else {
+        landmarkFilter.reset();
       }
+      const landmarks = raw ? landmarkFilter.filter(raw, timestamp / 1000, width, height) : null;
       if (landmarks) {
-        const openness = handOpenness(landmarks, video.videoWidth, video.videoHeight);
+        const openness = handOpenness(landmarks, width, height);
         tracking.handOpen = openness > (tracking.handOpen ? CLOSED_HAND_SCORE : OPEN_HAND_SCORE);
       } else {
         tracking.handOpen = false;
@@ -121,17 +141,20 @@ export function ARView({ onError, onStop }: ARViewProps) {
       tracking.frameId++;
       handPresent = landmarks !== null;
 
+      // Draw this frame (background + wound) together, once.
+      invalidateRef.current?.();
+
       const nextStatus: HandStatus = !handPresent ? 'none' : tracking.handOpen ? 'open' : 'closed';
       if (nextStatus !== status) {
         status = nextStatus;
         setHandStatus(nextStatus);
       }
 
-      if (showLandmarksRef.current && view.width > 0 && video.videoWidth) {
+      if (showLandmarksRef.current && view.width > 0) {
         debugCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
         debugCtx.clearRect(0, 0, view.width, view.height);
         if (landmarks) {
-          computeCover(cover, view.width, view.height, video.videoWidth, video.videoHeight);
+          computeCover(cover, view.width, view.height, width, height);
           drawLandmarks(debugCtx, landmarks, cover);
         }
         debugDirty = true;
@@ -150,6 +173,35 @@ export function ARView({ onError, onStop }: ARViewProps) {
       }
     };
 
+    // Preferred: run exactly once per new video frame, as it is presented.
+    const onVideoFrame: VideoFrameRequestCallback = (now) => {
+      videoFrameHandle = video.requestVideoFrameCallback(onVideoFrame);
+      videoFramesSeen++;
+      processFrame(now);
+    };
+    // Fallback: poll on animation frames and skip repeats.
+    const onAnimationFrame = (now: number) => {
+      rafId = requestAnimationFrame(onAnimationFrame);
+      if (video.currentTime === lastVideoTime) return;
+      lastVideoTime = video.currentTime;
+      processFrame(now);
+    };
+    const startLoop = () => {
+      if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+        videoFrameHandle = video.requestVideoFrameCallback(onVideoFrame);
+        // Some browsers don't deliver frame callbacks for a video that isn't
+        // shown; if none arrive, fall back to animation frames.
+        watchdog = window.setTimeout(() => {
+          if (cancelled || videoFramesSeen > 0) return;
+          console.warn('No video frame callbacks; falling back to requestAnimationFrame.');
+          video.cancelVideoFrameCallback(videoFrameHandle);
+          rafId = requestAnimationFrame(onAnimationFrame);
+        }, 1500);
+      } else {
+        rafId = requestAnimationFrame(onAnimationFrame);
+      }
+    };
+
     const start = async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
         onErrorRef.current(UNSUPPORTED_MESSAGE);
@@ -159,7 +211,12 @@ export function ARView({ onError, onStop }: ARViewProps) {
       let mediaStream: MediaStream;
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 60 },
+            facingMode: 'user',
+          },
           audio: false,
         });
       } catch (err) {
@@ -199,7 +256,7 @@ export function ARView({ onError, onStop }: ARViewProps) {
       landmarker = loaded.landmarker;
       setDelegate(loaded.delegate);
       setPhase('running');
-      rafId = requestAnimationFrame(tick);
+      startLoop();
     };
 
     void start();
@@ -207,6 +264,8 @@ export function ARView({ onError, onStop }: ARViewProps) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
+      window.clearTimeout(watchdog);
+      if ('cancelVideoFrameCallback' in video) video.cancelVideoFrameCallback(videoFrameHandle);
       resizeObserver.disconnect();
       landmarker?.close();
       landmarker = null;
@@ -214,17 +273,22 @@ export function ARView({ onError, onStop }: ARViewProps) {
       video.srcObject = null;
       tracking.landmarks = null;
       tracking.handOpen = false;
-      tracking.video = null;
+      tracking.frame = null;
     };
+  }, []);
+
+  const onSceneReady = useCallback((invalidate: () => void) => {
+    invalidateRef.current = invalidate;
   }, []);
 
   return (
     <div className="ar-root">
       {/* Everything in the stage is mirrored together, like a selfie camera. */}
       <div className="stage" ref={stageRef}>
-        <video ref={videoRef} className="layer video" autoPlay playsInline muted />
+        {/* Only a frame source: the scene draws the frames it detected on. */}
+        <video ref={videoRef} className="layer video source-video" autoPlay playsInline muted />
         <div className="layer">
-          <ARScene tracking={trackingRef} />
+          <ARScene tracking={trackingRef} onReady={onSceneReady} />
         </div>
         <canvas ref={debugCanvasRef} className="layer debug" />
       </div>

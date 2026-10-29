@@ -28,7 +28,8 @@ interface WebcamPoseSourceProps {
 /**
  * Turns the webcam's MediaPipe landmarks into a world-space HandPose for the
  * virtual camera at the origin, and gives that camera the webcam's optics.
- * Runs before the renderers each frame (negative priority).
+ * Runs before the renderers each frame (negative priority); with on-demand
+ * rendering that is once per detected camera frame.
  */
 export function WebcamPoseSource({ tracking, pose }: WebcamPoseSourceProps) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
@@ -44,14 +45,14 @@ export function WebcamPoseSource({ tracking, pose }: WebcamPoseSourceProps) {
   useFrame(() => {
     const state = tracking.current;
     const out = pose.current;
-    const video = state?.video;
-    if (!state || !out || !video || !video.videoWidth) return;
+    const frame = state?.frame;
+    if (!state || !out || !frame || !frame.width) return;
 
     const p = scratch.projection;
     p.viewW = size.width;
     p.viewH = size.height;
-    p.videoW = video.videoWidth;
-    const cover = computeCover(p.cover, p.viewW, p.viewH, video.videoWidth, video.videoHeight);
+    p.videoW = frame.width;
+    const cover = computeCover(p.cover, p.viewW, p.viewH, frame.width, frame.height);
 
     // Give the virtual camera the webcam's optics as seen through the cover
     // crop, so the wound's perspective matches the real image.
@@ -75,6 +76,7 @@ export function WebcamPoseSource({ tracking, pose }: WebcamPoseSourceProps) {
       for (let i = 0; i < landmarks.length; i++) landmarkToWorld(out.joints[i], landmarks[i], p);
       out.version++;
     }
+    out.frameId = state.frameId;
   }, -1);
 
   return null;

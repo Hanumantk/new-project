@@ -24,7 +24,6 @@ const WOUND_LIFT = 0.0014;
 const WOUND_SEGMENTS = 192;
 /** Typical adult wrist → middle-finger knuckle distance, in metres. */
 const REAL_PALM_LENGTH = 0.09;
-const SMOOTHING = 0.35;
 const FADE_SECONDS = 0.2;
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
@@ -163,17 +162,13 @@ export function PalmInjury({ pose, occlude = true }: PalmInjuryProps) {
       updateTargets(hand);
     }
 
-    // Snap rather than glide when (re)appearing from invisible.
-    if (visible && s.hasTarget && s.opacity === 0) {
+    // No smoothing here: the pose is used as tracked (webcam landmarks are
+    // already One Euro filtered), so the wound never trails the hand.
+    if (s.hasTarget) {
       group.position.copy(s.targetPosition);
       group.quaternion.copy(s.targetQuaternion);
       group.scale.setScalar(s.targetScale);
       s.joints.forEach((joint, i) => joint.copy(s.targetJoints[i]));
-    } else if (s.hasTarget) {
-      group.position.lerp(s.targetPosition, SMOOTHING);
-      group.quaternion.slerp(s.targetQuaternion, SMOOTHING);
-      group.scale.setScalar(THREE.MathUtils.lerp(group.scale.x, s.targetScale, SMOOTHING));
-      s.joints.forEach((joint, i) => joint.lerp(s.targetJoints[i], SMOOTHING));
     }
 
     const fadeStep = delta / FADE_SECONDS;
@@ -182,7 +177,7 @@ export function PalmInjury({ pose, occlude = true }: PalmInjuryProps) {
     woundMaterial.opacity = s.opacity;
     group.visible = s.opacity > 0;
 
-    // Keep the invisible hand in step with the (smoothed) wound so the real
+    // Keep the invisible hand in step with the wound so the real
     // hand hides it whenever the palm is turned away.
     occluder.root.visible = occlude && group.visible;
     if (occluder.root.visible) {
