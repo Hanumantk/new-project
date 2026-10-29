@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { FingerCoverage } from '../lib/fingerCoverage';
 import { HandOccluder } from '../lib/handOccluder';
 import type { HandPose } from '../lib/handPose';
 import {
@@ -33,6 +34,13 @@ const SKIN_MATCH = 0.75;
 const CAVITY_OCCLUSION = 0.5;
 /** Bruise strength when multiplied into the camera picture. */
 const BRUISE_STRENGTH = 0.7;
+/**
+ * When fingers hide this share of the wound (webcam view), fade the whole
+ * wound out rather than show slivers of it between and over the fingers.
+ */
+const COVERED_FADE_START = 0.2;
+const COVERED_FADE_END = 0.45;
+const COVERED_EASE_SECONDS = 0.12;
 
 /** Soft falloff across the outer 20% of the palm grid, so no edge ever shows. */
 const FEATHER_GLSL = /* glsl */ `
@@ -75,6 +83,7 @@ export function PalmInjury({
 }: PalmInjuryProps) {
   const gl = useThree((s) => s.gl);
   const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
   const [textures, setTextures] = useState<InjuryTextures | null>(null);
   const tintRef = useRef<THREE.Mesh>(null);
   const woundRef = useRef<THREE.Mesh>(null);
@@ -185,6 +194,9 @@ export function PalmInjury({
       opacity: 0,
       eye: new THREE.Vector3(),
       toEye: new THREE.Vector3(),
+      coverage: new FingerCoverage(),
+      uncoveredTarget: 1,
+      uncovered: 1,
     }),
     [],
   );
@@ -203,6 +215,20 @@ export function PalmInjury({
     if (hand.tracked && hand.version !== s.lastVersion) {
       s.lastVersion = hand.version;
       s.hasShape = palm.update(hand.joints, hand.isRightHand, hand.surfaceOffset) || s.hasShape;
+
+      // Webcam view: how much of the wound do the fingers hide on screen?
+      if (composite && camera instanceof THREE.PerspectiveCamera) {
+        const covered = s.coverage.measure(
+          palm.woundSamples.length,
+          (i, out) => palm.vertexAt(palm.woundSamples[i], out),
+          hand.joints,
+          camera,
+          size.width,
+          size.height,
+          palm.handScale,
+        );
+        s.uncoveredTarget = 1 - THREE.MathUtils.smoothstep(covered, COVERED_FADE_START, COVERED_FADE_END);
+      }
     }
 
     // A closed hand covers the palm, so the wound only shows while it's open.
@@ -220,7 +246,12 @@ export function PalmInjury({
       Math.cos(THREE.MathUtils.degToRad(FADE_START_DEG)),
     );
 
-    const opacity = s.opacity * angleFade * THREE.MathUtils.clamp(strength?.current ?? 1, 0, 1);
+    // Fade out while fingers cover most of it (eased, so it doesn't flicker).
+    if (s.opacity === 0) s.uncovered = s.uncoveredTarget;
+    else s.uncovered += (s.uncoveredTarget - s.uncovered) * Math.min(1, delta / COVERED_EASE_SECONDS);
+
+    const opacity =
+      s.opacity * angleFade * s.uncovered * THREE.MathUtils.clamp(strength?.current ?? 1, 0, 1);
     if (tintMaterial instanceof THREE.ShaderMaterial) tintMaterial.uniforms.opacity.value = opacity;
     else tintMaterial.opacity = opacity;
     woundMaterial.opacity = opacity;

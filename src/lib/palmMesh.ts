@@ -42,6 +42,8 @@ const WOUND_CENTRE_T = 0;
  * diagonally, from below the index knuckle towards the heel of the hand.
  */
 const WOUND_ANGLE = 0;
+/** Texture region holding the cut and the blood around it. */
+const WOUND_CORE = { u0: 0.25, u1: 0.75, v0: 0.3, v1: 0.66 };
 /** Wound size relative to the designed texture patch (a 7 cm square). */
 export const INJURY_SIZE = 1.3;
 
@@ -80,6 +82,11 @@ export class PalmMesh {
   readonly normal = new THREE.Vector3();
   /** Palm length relative to a typical 9 cm palm. */
   handScale = 1;
+  /**
+   * Vertices under the wound's core (the cut and the blood around it), used
+   * to judge how much of the wound the fingers hide.
+   */
+  readonly woundSamples: Uint16Array;
 
   private readonly positions: Float32Array;
   private readonly normals: Float32Array;
@@ -124,6 +131,17 @@ export class PalmMesh {
         grid[k * 2 + 1] = t;
       }
     }
+    const samples: number[] = [];
+    for (let j = 0; j < N; j += 2) {
+      for (let i = 0; i < N; i += 2) {
+        const k = j * N + i;
+        const u = uvs[k * 2];
+        const v = uvs[k * 2 + 1];
+        if (u >= WOUND_CORE.u0 && u <= WOUND_CORE.u1 && v >= WOUND_CORE.v0 && v <= WOUND_CORE.v1) samples.push(k);
+      }
+    }
+    this.woundSamples = Uint16Array.from(samples);
+
     for (let i = 0; i < N; i++) {
       quadWeights(PalmMesh.sAt(i), this.w);
       this.quad.set(this.w.slice(0, 3), i * 3);
@@ -236,6 +254,11 @@ export class PalmMesh {
   /** World position of grid vertex (i, j), for tests and debugging. */
   vertex(i: number, j: number, out = new THREE.Vector3()) {
     return out.fromArray(this.positions, (j * N + i) * 3);
+  }
+
+  /** World position of the vertex at buffer index k. */
+  vertexAt(k: number, out: THREE.Vector3) {
+    return out.fromArray(this.positions, k * 3);
   }
 
   /** Vertex normals from central differences across the grid, facing out of the palm. */
