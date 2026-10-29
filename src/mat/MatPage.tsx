@@ -20,6 +20,16 @@ export function MatPage() {
   const kit = kitResult?.ok ? kitResult.kit : null;
   const experienceRef = useRef<MatExperience | null>(null);
 
+  // ?test: keyboard shortcut for the emulator — T traces a test rectangle.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('test')) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code === 'KeyT') experienceRef.current?.traceTestRectangle();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void checkARSupport().then((result) => !cancelled && setSupport(result));

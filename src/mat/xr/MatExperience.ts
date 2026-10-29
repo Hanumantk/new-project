@@ -5,13 +5,13 @@ import { PalmUpToggle } from '../lib/palmUp';
 import { PinchDetector } from '../lib/pinch';
 import { fitRectangle, isBigEnough, orientToViewer, type MatPlacement } from '../lib/rectFit';
 import { StrokeBuffer } from '../lib/stroke';
-import { medianY, surfaceFromPen } from '../lib/surface';
+import { medianY, pointInPolygon, surfaceFromPen } from '../lib/surface';
 import { ControlPanel, type PanelButton } from './ControlPanel';
 import { HandTracker, type HandState } from './hands';
 import { HintBoard } from './HintBoard';
 import { MatView } from './MatView';
 import { StrokeView } from './StrokeView';
-import { findSurfacePlane, SurfaceProbe } from './surfaceProbe';
+import { detectedHorizontalPlanes, findSurfacePlane, SurfaceProbe } from './surfaceProbe';
 
 export interface MatExperienceEvents {
   /** The session ended (the user left it, or it failed). */
@@ -44,6 +44,8 @@ const RESTORE_TIMEOUT = 12;
 const NO_HANDS_HINT_AFTER = 1.5;
 /** How quickly the overlay follows the opacity slider (1/s). */
 const OPACITY_RATE = 12;
+/** Fingertip radius assumed when the stroke has no hand (the ?test trace). */
+const DEFAULT_PEN_RADIUS = 0.008;
 
 const DRAW_TITLE = 'Pinch and trace a rectangle on your table';
 const DRAW_DETAIL = 'Hold thumb and index together, draw around the area, then let go. At least 25 × 20 cm.';
@@ -89,6 +91,7 @@ export class MatExperience {
   private savedHandle: string | null = null;
   /** Bumped on every redraw so late anchor promises from an old mat are ignored. */
   private generation = 0;
+  private testTraceRequested = false;
 
   private readonly head = new THREE.Vector3();
   private readonly headMatrix = new THREE.Matrix4();
@@ -166,6 +169,15 @@ export class MatExperience {
     this.resetToDraw();
   }
 
+  /**
+   * Test aid (the page's ?test mode, for the emulator): next frame, trace a
+   * 60 × 40 cm rectangle on the table 50 cm ahead as if it had been
+   * pinch-drawn, then place it through the usual steps.
+   */
+  traceTestRectangle() {
+    if (this.phase === 'draw') this.testTraceRequested = true;
+  }
+
   private resetToDraw() {
     this.generation++;
     this.phase = 'draw';
@@ -199,7 +211,10 @@ export class MatExperience {
     switch (this.phase) {
       case 'draw':
         this.watchForHands(dt);
-        if (rightEvent === 'start') this.beginStroke(this.hands.right);
+        if (this.testTraceRequested) {
+          this.testTraceRequested = false;
+          this.runTestTrace(frame, space);
+        } else if (rightEvent === 'start') this.beginStroke(this.hands.right);
         else if (leftEvent === 'start') this.beginStroke(this.hands.left);
         break;
       case 'drawing': {
@@ -268,7 +283,7 @@ export class MatExperience {
     }
     const { x, z } = this.strokeCentre();
     const penY = medianY(this.stroke.positions, this.stroke.count);
-    const plane = findSurfacePlane(frame, space, x, z, penY, this.pen!.penRadius);
+    const plane = findSurfacePlane(frame, space, x, z, penY, this.pen?.penRadius ?? DEFAULT_PEN_RADIUS);
     if (plane !== null) {
       this.place(frame, space, plane);
       return;
@@ -282,7 +297,52 @@ export class MatExperience {
 
   /** Table height from the pen alone: its median height, one fingertip radius down. */
   private penSurface() {
-    return surfaceFromPen(medianY(this.stroke.positions, this.stroke.count), this.pen?.penRadius ?? 0.008);
+    return surfaceFromPen(medianY(this.stroke.positions, this.stroke.count), this.pen?.penRadius ?? DEFAULT_PEN_RADIUS);
+  }
+
+  private runTestTrace(frame: XRFrame, space: XRReferenceSpace) {
+    const e = this.headMatrix.elements;
+    let fx = -e[8];
+    let fz = -e[10];
+    const length = Math.hypot(fx, fz) || 1;
+    fx /= length;
+    fz /= length;
+    const cx = this.head.x + fx * 0.5;
+    const cz = this.head.z + fz * 0.5;
+    // The highest detected table under that point, else a seated desk 45 cm below the eyes.
+    let tableY = this.head.y - 0.45;
+    let found = false;
+    for (const plane of detectedHorizontalPlanes(frame, space)) {
+      if (plane.y < this.head.y - 0.15 && (!found || plane.y > tableY) && pointInPolygon(cx, cz, plane.polygon)) {
+        tableY = plane.y;
+        found = true;
+      }
+    }
+    const penY = tableY + DEFAULT_PEN_RADIUS;
+    // Corners of 60 × 40 cm, the width across the view; walk the outline every 1 cm.
+    const corners = [
+      [-0.3, -0.2],
+      [0.3, -0.2],
+      [0.3, 0.2],
+      [-0.3, 0.2],
+      [-0.3, -0.2],
+    ];
+    this.pen = null;
+    this.stroke.reset();
+    for (let k = 0; k < 4; k++) {
+      const [ax, az] = corners[k];
+      const [bx, bz] = corners[k + 1];
+      for (let i = 0; i < 60; i++) {
+        const t = i / 60;
+        const lx = ax + (bx - ax) * t; // across: along (−fz, fx)
+        const lz = az + (bz - az) * t; // away: along −forward
+        this.stroke.add(cx - fz * lx - fx * lz, penY, cz + fx * lx - fz * lz);
+      }
+    }
+    this.strokeView.begin();
+    this.strokeView.sync(this.stroke);
+    this.hint.hide();
+    this.finishStroke(frame, space);
   }
 
   private strokeCentre() {
