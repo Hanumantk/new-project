@@ -24,9 +24,13 @@ const fragmentShader = /* glsl */ `
   // Screen UV -> frame UV for the cover crop.
   uniform vec2 coverScale;
   uniform vec2 coverOffset;
+  // Mesh view: a plain backdrop instead of the camera picture.
+  uniform float plain;
+  uniform vec3 plainColor;
   varying vec2 vUv;
   void main() {
     gl_FragColor = texture2D(frame, vUv * coverScale + coverOffset);
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, plainColor, plain);
     #include <colorspace_fragment>
   }
 `;
@@ -34,9 +38,14 @@ const fragmentShader = /* glsl */ `
 interface VideoBackgroundProps {
   tracking: RefObject<TrackingState>;
   pose: RefObject<HandPose>;
+  /** Draw a plain backdrop instead of the camera picture (mesh view). */
+  plain?: boolean;
 }
 
-export function VideoBackground({ tracking, pose }: VideoBackgroundProps) {
+/** Backdrop colour of the mesh view. */
+const PLAIN_BACKDROP = new THREE.Color('#e9ebe8');
+
+export function VideoBackground({ tracking, pose, plain = false }: VideoBackgroundProps) {
   const size = useThree((s) => s.size);
   const { mesh, material, scratch } = useMemo(() => {
     const material = new THREE.ShaderMaterial({
@@ -46,6 +55,8 @@ export function VideoBackground({ tracking, pose }: VideoBackgroundProps) {
         frame: { value: null },
         coverScale: { value: new THREE.Vector2(1, 1) },
         coverOffset: { value: new THREE.Vector2(0, 0) },
+        plain: { value: 0 },
+        plainColor: { value: PLAIN_BACKDROP.clone() },
       },
       depthTest: false,
       depthWrite: false,
@@ -92,6 +103,7 @@ export function VideoBackground({ tracking, pose }: VideoBackgroundProps) {
       scratch.height = frame.height;
       material.uniforms.frame.value = texture;
     }
+    material.uniforms.plain.value = plain ? 1 : 0;
     const rendered = state.rendered;
     if (rendered.backgroundFrameId !== state.frameId) {
       scratch.texture.needsUpdate = true; // upload the newly captured frame
