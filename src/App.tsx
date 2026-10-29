@@ -96,6 +96,9 @@ export default function App() {
         <a className="intro-link" href={sampleVideo ? '?' : `?video=${SAMPLE_VIDEO_PATH}`}>
           {sampleVideo ? 'Use the webcam instead' : 'No camera? Try the sample video'}
         </a>
+        <a className="intro-link" href="material-mat.html">
+          Material Mat: lay out the kit on your table (Quest)
+        </a>
       </div>
     </main>
   );

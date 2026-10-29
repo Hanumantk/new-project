@@ -1,0 +1,129 @@
+/* ---------- Material Mat page ---------- */
+
+.mat-card {
+  max-width: 460px;
+}
+
+.mat-card p {
+  text-align: left;
+}
+
+.mat-card .mat-note {
+  font-size: 13px;
+  margin: 0;
+}
+
+.mat-unsupported,
+.mat-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.mat-unsupported a {
+  color: var(--mint-strong);
+}
+
+/* A mat outline with a dashed slot and mint corner ticks. */
+.mat-icon {
+  position: relative;
+  width: 52px;
+  height: 40px;
+  border-radius: 6px;
+  background: #22302a;
+  box-shadow: 0 10px 20px rgba(20, 40, 30, 0.2);
+  margin-bottom: 4px;
+}
+
+.mat-icon::before {
+  content: '';
+  position: absolute;
+  inset: 9px 24px 9px 9px;
+  border: 2px dashed #8eddb0;
+  border-radius: 50%;
+}
+
+.mat-icon::after {
+  content: '';
+  position: absolute;
+  inset: 12px 8px 12px 32px;
+  border: 2px dashed #8eddb0;
+  border-radius: 3px;
+}
+
+.mat-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.mat-error-list {
+  margin: 0;
+  padding-left: 18px;
+  text-align: left;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #8a3b2a;
+  line-height: 1.5;
+}
+
+.mat-kit {
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 10px;
+}
+
+.mat-kit summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.mat-kit-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mat-kit-list li {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.mat-kit-step {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--mint);
+  color: #0e1512;
+  font-size: 11px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+
+.mat-kit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--text-muted);
+}
+
+.mat-kit-main strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.mat-kit-size {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

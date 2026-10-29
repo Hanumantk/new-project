@@ -87,6 +87,118 @@ camera's pixels, which WebXR doesn't give a page, and the bruise is laid
 over rather than multiplied, since passthrough is composited by the
 headset.
 
+## Material Mat (Quest 3 / 3S, passthrough AR)
+
+A second page, **`material-mat.html`**
+(`hanumantk.github.io/new-project/material-mat.html`, linked from the start
+screen), lays out everything you need for a ~5 cm scar-wax cut on the palm
+on your real table. Each material and tool gets a true-to-size outline, its
+quantity and its step number. You put the real things on the outlines.
+
+### In the headset
+
+1. Open the page in **Quest Browser**, tap **Enter AR**, put the controllers
+   down.
+2. **Draw the mat:** pinch thumb and index together on the table and trace
+   a rectangle around the area, then let go. A glowing line follows your
+   pinch. Anything under 25 × 20 cm is refused with a prompt to redraw.
+3. The mat appears on the rectangle, locked to the table (it stays put as
+   you walk around). Items run left to right in step order, rows from the
+   back of the mat to the front. On a small mat they're split into pages.
+4. **Controls** float just beyond the mat's front-right corner. Press them
+   with a bare fingertip:
+   - **Opacity** slider (0–100%) fades the whole overlay so you can see your
+     real items through it. It's remembered.
+   - **‹ Prev / Next ›** turn pages (in step mode they move by step).
+   - **Step mode** highlights one item at a time, shows its purpose large,
+     and dims the rest to 20%.
+   - **Redraw** removes the mat; tap twice to confirm.
+5. **Turn your left palm up** and hold it for half a second to hide or show
+   the controls.
+6. Next time, the page offers **Restore last mat** (Quest's persistent
+   anchors). The mat reappears where you left it once the headset
+   recognises the room.
+
+How it finds the table height: a detected horizontal plane under the stroke
+(if you've done Space Setup), otherwise a hit test straight down, otherwise
+the median height of your pinch less one fingertip radius. The rectangle is
+fitted with PCA on the stroke's points, refined to the tightest box near
+those axes so an unclosed or wobbly loop doesn't tilt it, with its front
+edge facing you. Points from your hand arriving or lifting off are ignored.
+
+### Editing the kit
+
+The kit is **`public/material-mat/materials.json`**. It's loaded when the
+page opens, so changing it (and pushing, which redeploys) changes the mat
+with no code changes. The page lists the kit under the Enter AR button, so
+you can check an edit without a headset. A broken file is reported there,
+naming the item and field. `materials.schema.json` next to it gives editors
+such as VS Code autocomplete and checking.
+
+Each item:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Unique id |
+| `step` | Order on the mat and in step mode |
+| `name`, `purpose`, `quantity` | Label text; quantity is the large line; purpose shows in step mode |
+| `footprint` | True size in cm: `{ "shape": "circle", "diameter": 6 }`, `{ "shape": "rect", "width": 12, "depth": 7 }` or `{ "shape": "pill", "length": 15, "width": 2 }` (rects and pills run left to right) |
+| `quantityVisual` (optional) | A true-scale model of the amount, beside the outline: `{ "type": "sphere", "diameter": 1.6 }`, `{ "type": "blob", "volumeMl": 2.5 }` (a dome of that volume) or `{ "type": "drops", "count": 3 }`, each with an optional `"color": "#rrggbb"` |
+
+The seed footprints are typical product sizes; measure your own items and
+adjust them. Up to 64 items.
+
+### Testing in the Immersive Web Emulator
+
+1. Install Meta's [Immersive Web Emulator](https://chromewebstore.google.com/detail/immersive-web-emulator/cgffilbpcibhmcfbgggfhfolhkfbhmik)
+   in Chrome or Edge. Pick a **Meta Quest 3**, and switch its input to
+   **hands**. To get detected planes (a table to snap to), load one of the
+   emulator's rooms; without one the mat uses the pinch height.
+2. Run `npm run dev` and open
+   `http://localhost:5173/material-mat.html?test`. Enter AR appears once
+   the emulator is active.
+3. **Simulate a pinch:** each hand's panel has a **Pinch** control. Drag it
+   to 1 to pinch, back to 0 to let go. In the emulator's Play mode, hold
+   the **left mouse button** to pinch the left hand or the **right mouse
+   button** for the right. Pinch is detected from the fingertips (under
+   1.5 cm starts, over 2.5 cm ends), so a full pinch counts. To draw,
+   move the hand (its position controls, or the transform handle in the
+   view) while it pinches, then release.
+4. **Shortcut:** with `?test` in the URL, press **T** while in AR to trace
+   a 60 × 40 cm rectangle 50 cm ahead. It goes through the same table
+   snapping, fitting, anchoring and saving as a real pinch, which is
+   handy for checking layouts and controls.
+5. **Poke the controls:** set the hand pose to **point** and move the hand
+   so the index fingertip goes into a button from the front. **Palm up:**
+   rotate the left hand palm-up and hold.
+6. The emulator keeps persistent anchors in the browser, so leaving and
+   choosing **Restore last mat** brings the same mat back.
+
+### Performance
+
+The whole mat is about 30 draw calls per eye. All outlines and fills are
+one mesh, the step badges one instanced mesh, and all label text one troika
+`BatchedText`. Per-slot fades and the step highlight go through
+uniforms/attributes, so nothing is rebuilt per frame. Hand joints and
+anchors are read with `fillPoses` into fixed buffers, and the frame loop
+reuses preallocated objects throughout.
+
+| Piece | File |
+| --- | --- |
+| Page: support check, Enter AR / Restore, kit list and errors, `?test` | `src/mat/MatPage.tsx` |
+| Session, frame loop, drawing → table height → fit → anchor, controls | `src/mat/xr/MatExperience.ts` |
+| Hand joints, pen, palm normal | `src/mat/xr/hands.ts` |
+| Pinch hysteresis, stroke buffer, rectangle fit, table choice, layout, poke, palm-up | `src/mat/lib/*.ts` (unit tested) |
+| Kit loading and checking | `src/mat/lib/kit.ts` |
+| Mat, slots, batches, panel, hint, stroke | `src/mat/xr/MatView.ts`, `SlotView.ts`, `slotBatches.ts`, `ControlPanel.ts`, `HintBoard.ts`, `StrokeView.ts` |
+
+Limits: with no Space Setup there are no planes, and hit test may find
+nothing, so the table height comes from your pinch (within about a
+centimetre). Anchors and persistent anchors depend on the browser; without
+them the mat still appears but can drift slightly, and **Restore last mat**
+isn't offered. Labels turn to face you, so from a low angle a label can
+overlap the outline behind it a little.
+
 ## How it works
 
 | Piece | File |
