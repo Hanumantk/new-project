@@ -17,6 +17,8 @@ export interface XRPrefs {
   skinFine: number;
   /** Show the tracked hand model as a wireframe over the real hand. */
   showHandMesh: boolean;
+  /** Raise (+) or sink (−) the wound on the skin, mm. */
+  skinHeightMm: number;
 }
 
 const STORAGE_KEY = 'palm-injury.xr-prefs';
@@ -25,7 +27,7 @@ const STORAGE_KEY = 'palm-injury.xr-prefs';
 export const SKIN_PRESETS = ['#f1d3c2', '#e3b597', '#cf9a78', '#b07a57', '#8a5a3c', '#5e3b27'] as const;
 
 function load(): XRPrefs {
-  const defaults: XRPrefs = { hand: 'left', skinAuto: true, skinPreset: 2, skinFine: 0.5, showHandMesh: false };
+  const defaults: XRPrefs = { hand: 'left', skinAuto: true, skinPreset: 2, skinFine: 0.5, showHandMesh: false, skinHeightMm: 0 };
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<XRPrefs> | null;
     if (!saved) return defaults;
@@ -38,6 +40,7 @@ function load(): XRPrefs {
           : defaults.skinPreset,
       skinFine: typeof saved.skinFine === 'number' ? Math.min(Math.max(saved.skinFine, 0), 1) : defaults.skinFine,
       showHandMesh: saved.showHandMesh === true,
+      skinHeightMm: typeof saved.skinHeightMm === 'number' ? Math.min(Math.max(saved.skinHeightMm, -5), 5) : 0,
     };
   } catch {
     return defaults;
@@ -60,8 +63,8 @@ export function setXRPrefs(patch: Partial<XRPrefs>) {
   Object.assign(xrPrefs, patch);
   xrPrefs.version++;
   try {
-    const { hand, skinAuto, skinPreset, skinFine, showHandMesh } = xrPrefs;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ hand, skinAuto, skinPreset, skinFine, showHandMesh }));
+    const { hand, skinAuto, skinPreset, skinFine, showHandMesh, skinHeightMm } = xrPrefs;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ hand, skinAuto, skinPreset, skinFine, showHandMesh, skinHeightMm }));
   } catch {
     // Storage unavailable: the settings last for this visit.
   }

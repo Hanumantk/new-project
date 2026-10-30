@@ -65,6 +65,15 @@ export interface HandModelData {
   parent: number[];
   /** Rest width across the knuckles (index → pinky, metres). */
   restWidth: number;
+  /**
+   * Rest thickness of each bone's part of the hand (m): for the palm, its
+   * half-thickness; for a finger or thumb segment, its radius (0: as its parent).
+   */
+  restRadius: number[];
+  /** Palm bones (wrist, metacarpals, trapezium): width from the knuckle span, not their radius. */
+  isPalm: boolean[];
+  /** The joint whose radius (centre to skin, measured by the headset) sizes each bone's thickness. */
+  radiusJoint: (Joint | null)[];
 }
 
 /** An orthonormal frame from an aim direction and a palm-side direction (made perpendicular). */
@@ -151,11 +160,65 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
   });
   const parent = bones.map((b) => bones.indexOf(b.parent as THREE.Bone));
   const restWidth = head('index_prox').distanceTo(head('pinky_prox'));
-  return { geometry, names, specs, restHead, restFrame, rigidOffset, rigidRotation, restSpan, restLength, parent, restWidth };
+
+  // Each bone's thickness at rest, from the vertices it moves most.
+  const isPalm = names.map((n) => n === 'radius_ulna' || n === 'thumb_trapez' || (n.endsWith('_meta') && n !== 'thumb_meta'));
+  const sum = new Float64Array(names.length);
+  const cnt = new Float64Array(names.length);
+  const skinIndex = geometry.getAttribute('skinIndex');
+  const skinWeight = geometry.getAttribute('skinWeight');
+  const inv = new THREE.Quaternion();
+  for (let i = 0; i < count; i++) {
+    let best = 0, bestW = -1;
+    for (let k = 0; k < 4; k++) {
+      const w = skinWeight.getComponent(i, k);
+      const b = skinIndex.getComponent(i, k);
+      if (w > bestW) {
+        bestW = w;
+        best = b;
+      }
+    }
+    v.fromArray(pos, i * 3).sub(restHead[best]).applyQuaternion(inv.copy(restFrame[best]).invert());
+    // Local axes: x along the bone, y towards the palm side, z across.
+    sum[best] += isPalm[best] ? Math.abs(v.y) : Math.hypot(v.y, v.z);
+    cnt[best]++;
+  }
+  const restRadius = names.map((_, i) => (cnt[i] > 20 ? sum[i] / cnt[i] : 0));
+  const radiusJoint = names.map((name, i): Joint | null => {
+    if (name === 'radius_ulna') return 'middle-finger-metacarpal';
+    if (name === 'thumb_trapez') return 'thumb-metacarpal';
+    const spec = specs[i];
+    if (spec.head === 'rigid') return (spec.roll as Joint) ?? null;
+    return spec.head as Joint;
+  });
+  return {
+    geometry,
+    names,
+    specs,
+    restHead,
+    restFrame,
+    rigidOffset,
+    rigidRotation,
+    restSpan,
+    restLength,
+    parent,
+    restWidth,
+    restRadius,
+    isPalm,
+    radiusJoint,
+  };
 }
 
-/** How far the occluding copy of the hand sits inside the skin (m): below the wound's cut. */
-const OCCLUDER_INSET = 0.004;
+/**
+ * The occluding copy of the hand is pushed this far away from the viewer
+ * along each line of sight (m): its outline on screen is unchanged, but the
+ * skin right under the wound (or a bump of the model next to it) can never
+ * cover it, while fingers in front of the palm and the back of the hand
+ * (centimetres in front) still do.
+ */
+const OCCLUDER_PUSH = 0.006;
+/** Frames averaged when calibrating to a hand (~0.5 s). */
+const CALIBRATION_FRAMES = 36;
 
 /**
  * The driven hand: bones (world matrices set from the joints every frame),
@@ -167,8 +230,17 @@ export class XRHandModel {
   readonly bones: THREE.Bone[];
   readonly occluder: THREE.SkinnedMesh;
   readonly wire: THREE.SkinnedMesh;
-  /** The user's palm length, wrist → middle knuckle (m), measured this frame. */
+  /** The user's palm length, wrist → middle knuckle (m), as calibrated (live until then). */
   palmLength = 0.095;
+  /** Whether the hand's sizes have been captured (they're live and noisier until then). */
+  calibrated = false;
+  private calibrating = false;
+  private calFrames = 0;
+  private calPalm = 0;
+  private readonly calSum: THREE.Vector3[];
+  private readonly calScale: THREE.Vector3[];
+  private readonly thickScale: Float64Array;
+  private readonly push = { value: OCCLUDER_PUSH };
   private readonly heads: THREE.Vector3[];
   private readonly frames: THREE.Quaternion[];
   /** Per bone: its length scale (user / model), and its scale vector (length, thickness, width). */
@@ -178,7 +250,7 @@ export class XRHandModel {
   private readonly n = new THREE.Vector3();
   private readonly palm = new THREE.Vector3();
   private readonly m = new THREE.Matrix4();
-  private readonly root_ = { head: new THREE.Vector3(), frame: new THREE.Quaternion(), lengthScale: 1 };
+  private readonly root_ = { head: new THREE.Vector3(), frame: new THREE.Quaternion(), scale: new THREE.Vector3(1, 1, 1) };
 
   constructor(readonly data: HandModelData) {
     this.bones = data.names.map((name, i) => {
@@ -194,14 +266,22 @@ export class XRHandModel {
     this.heads = data.names.map(() => new THREE.Vector3());
     this.lengthScale = new Float64Array(data.names.length).fill(1);
     this.boneScale = data.names.map(() => new THREE.Vector3(1, 1, 1));
+    this.calSum = data.names.map(() => new THREE.Vector3());
+    this.calScale = data.names.map(() => new THREE.Vector3(1, 1, 1));
+    this.thickScale = new Float64Array(data.names.length).fill(1);
     this.frames = data.names.map(() => new THREE.Quaternion());
     const skeleton = new THREE.Skeleton(this.bones);
     const occluderMaterial = new THREE.MeshBasicMaterial({ colorWrite: false });
     occluderMaterial.onBeforeCompile = (shader) => {
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>\ntransformed -= normalize(objectNormal) * ${OCCLUDER_INSET.toFixed(4)};`,
-      );
+      shader.uniforms.pushBack = this.push;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float pushBack;')
+        .replace(
+          '#include <project_vertex>',
+          `#include <project_vertex>
+          // Further along the line of sight: same outline, more depth.
+          gl_Position = projectionMatrix * vec4(mvPosition.xyz + normalize(mvPosition.xyz) * pushBack, 1.0);`,
+        );
     };
     occluderMaterial.customProgramCacheKey = () => 'xr-hand-occluder';
     this.occluder = new THREE.SkinnedMesh(data.geometry, occluderMaterial);
@@ -230,8 +310,10 @@ export class XRHandModel {
     const indexKnuckle = j['index-finger-phalanx-proximal'];
     const pinkyKnuckle = j['pinky-finger-phalanx-proximal'];
     if (!indexKnuckle || !pinkyKnuckle) return false;
-    // Sized to this hand: each bone's length to its own segment, width and thickness to the knuckle span.
-    this.palmLength = wrist.position.distanceTo(knuckle.position);
+    // Sized to this hand: each bone's length to its own segment, its thickness
+    // to the headset's measured joint radius, the palm's width to the knuckle span.
+    const palmLength = wrist.position.distanceTo(knuckle.position);
+    if (!this.calibrated) this.palmLength = palmLength;
     const widthScale = indexKnuckle.position.distanceTo(pinkyKnuckle.position) / d.restWidth;
     this.palm.set(0, -1, 0).applyQuaternion(middle.quaternion);
 
@@ -244,11 +326,7 @@ export class XRHandModel {
         const head = this.heads[i];
         if (rigid) {
           const root = this.root_;
-          head
-            .copy(d.rigidOffset[i])
-            .multiply(this.n.set(root.lengthScale, widthScale, widthScale))
-            .applyQuaternion(root.frame)
-            .add(root.head);
+          head.copy(d.rigidOffset[i]).multiply(root.scale).applyQuaternion(root.frame).add(root.head);
         } else {
           const joint = j[spec.head as Joint];
           if (!joint) return false;
@@ -269,11 +347,24 @@ export class XRHandModel {
           this.frames[i].copy(this.root_.frame).multiply(d.rigidRotation[i]);
           this.lengthScale[i] = widthScale;
         }
-        this.boneScale[i].set(this.lengthScale[i], widthScale, widthScale);
+        const radiusJoint = d.radiusJoint[i] ? j[d.radiusJoint[i]!] : undefined;
+        const radius = radiusJoint?.jointRadius;
+        this.thickScale[i] =
+          radius && d.restRadius[i] > 0
+            ? THREE.MathUtils.clamp(radius / d.restRadius[i], 0.5, 2.5)
+            : this.thickScale[d.parent[i]] || 1;
+        const scale = this.boneScale[i];
+        if (this.calibrated) scale.copy(this.calScale[i]);
+        else scale.set(this.lengthScale[i], this.thickScale[i], d.isPalm[i] ? widthScale : this.thickScale[i]);
+        if (this.calibrating) {
+          this.calSum[i].x += this.lengthScale[i];
+          this.calSum[i].y += this.thickScale[i];
+          this.calSum[i].z += d.isPalm[i] ? widthScale : this.thickScale[i];
+        }
         if (d.names[i] === 'radius_ulna') {
           this.root_.head.copy(head);
           this.root_.frame.copy(this.frames[i]);
-          this.root_.lengthScale = this.lengthScale[i];
+          this.root_.scale.copy(scale);
         }
       }
     }
@@ -282,7 +373,31 @@ export class XRHandModel {
       bone.matrixWorld.compose(this.heads[i], this.frames[i], this.boneScale[i]);
       bone.matrix.copy(bone.matrixWorld);
     }
+    if (this.calibrating) {
+      this.calPalm += palmLength;
+      if (++this.calFrames >= CALIBRATION_FRAMES) {
+        // Freeze this hand's sizes: steadier than measuring them every frame.
+        for (let i = 0; i < this.calScale.length; i++) this.calScale[i].copy(this.calSum[i]).divideScalar(this.calFrames);
+        this.palmLength = this.calPalm / this.calFrames;
+        this.calibrating = false;
+        this.calibrated = true;
+      }
+    }
     return true;
+  }
+
+  /** Measures the hand afresh over the next ~0.5 s (sizes are live until it's done). */
+  startCalibration() {
+    this.calibrating = true;
+    this.calibrated = false;
+    this.calFrames = 0;
+    this.calPalm = 0;
+    for (const v of this.calSum) v.set(0, 0, 0);
+  }
+
+  /** Pushes the occluder further back (m), when the wound is lowered into the skin. */
+  setOccluderPushExtra(extra: number) {
+    this.push.value = OCCLUDER_PUSH + Math.max(0, extra);
   }
 
   /** The hand's current surface (world): skinned vertex positions, written into `out` (3 per vertex). */
