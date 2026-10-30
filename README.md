@@ -2,10 +2,10 @@
 
 A single-page React + TypeScript app that uses your webcam, tracks your hand in
 real time with MediaPipe's **HandLandmarker**, and renders a realistic wound
-on your palm (three.js via **@react-three/fiber**) that follows, tilts and
-scales with your hand: a deep laceration with raw flesh walls, blood pooled
-in it, swollen torn edges, wet blood oozing out with drips, a scrape, and
-bruising around it.
+on your palm (three.js via **@react-three/fiber**) that stays glued to it as
+the hand moves, tilts and turns: a sculpted 3D laceration
+(`public/models/Wound.glb`) with swollen lips, a deep wet cut and bruising
+around it, bent onto the curve of your palm.
 
 ## Run it
 
@@ -32,9 +32,21 @@ clip of an open palm moving is bundled: open
 video** on the start screen. See `public/samples/README.md` for its source
 and licence.
 
-**Debug** in the HUD shows the 21 landmarks and the palm mesh wireframe, plus
-the frame-sync readout: the latest camera frame, the frame the wound pose and
-the background were drawn from, and a count of renders where they differed.
+A second clip, `?video=samples/palm-still.webm`, holds the hand perfectly
+still under fresh sensor noise, for measuring jitter.
+
+**Debug** in the HUD shows the frame-sync readout (the latest camera frame,
+the frames the wound pose and the background were drawn from, and a count of
+renders where they differed) and four overlays you can switch separately:
+
+- **Landmarks**: MediaPipe's 21 points.
+- **Palm surface**: the curved surface the wound is bent onto, as a wireframe.
+- **Wound box**: the wound's bounding box, bent with it.
+- **Jitter**: how much the wound's centre moved over the last second
+  (RMS, in video pixels, steady drift removed), next to the same figure for
+  the unsmoothed pose. Green below 0.5 px. It reads "moving" while the hand
+  moves.
+
 The HUD always shows the render FPS and the mean detection time.
 
 ### Mesh view
@@ -238,11 +250,14 @@ overlap the outline behind it a little.
 | Captured frame as the full-screen background (or the plain mesh-view backdrop) | `src/components/VideoBackground.tsx` |
 | Mesh view: grayscale hand mesh posed from the landmarks | `src/components/HandMeshView.tsx`, `src/lib/handRig.ts` |
 | Lights from the skin, wound pass, camera-matching post pass | `src/components/WebcamCompositor.tsx` |
-| Wound and bruise materials, angle fade, occlusion | `src/components/PalmInjury.tsx` |
-| Palm-conforming 32×32 mesh with fixed palm-space UVs | `src/lib/palmMesh.ts` |
-| One Euro filter for the landmarks | `src/lib/oneEuroFilter.ts` |
+| The wound model, bruise, palm stand-in, fades, debug overlays | `src/components/WoundModel.tsx` |
+| Loading and normalising `Wound.glb` (size, skin level, per-vertex shading data) | `src/lib/woundGeometry.ts` |
+| Bending onto the palm (GLSL), wound and bruise materials | `src/lib/woundShaders.ts` |
+| Palm template, palm surface, wound placement | `src/lib/palmModel.ts` |
+| Webcam palm pose: rigid fit, depth from palm size, jitter meter | `src/lib/webcamPalm.ts`, `src/lib/rigidFit.ts` |
+| Pose smoothing (One Euro on position, size and rotation; deadband; lead) | `src/lib/poseFilter.ts`, `src/lib/oneEuroFilter.ts` |
+| Headset joints → the same rigid palm pose | `src/lib/jointPalm.ts` |
 | Skin colour / camera noise sampling, and lighting from it | `src/lib/skinSampler.ts`, `src/lib/skinLighting.ts` |
-| Procedural wound maps (colour, normals, height, roughness, masks), in a Web Worker | `src/lib/injury/` |
 | Invisible hand that hides the wound behind it | `src/lib/handOccluder.ts` |
 | Webcam landmarks → 3D hand pose, camera optics | `src/components/WebcamPoseSource.tsx` |
 | Headset mode: session, VR room, hint panel | `src/components/XRView.tsx`, `src/components/XRScene.tsx` |
@@ -254,37 +269,64 @@ overlap the outline behind it a little.
   is copied once into a canvas; detection runs on that copy, and the scene
   draws the same copy as its background before rendering once
   (`frameloop="demand"` + `invalidate()`). The wound pose and the picture
-  behind it therefore always come from the same frame — no trailing.
-- **Filtering.** No pose smoothing; instead each landmark coordinate goes
-  through a One Euro filter (min cutoff 1 Hz, β 0.02, derivative cutoff
-  1 Hz) in video pixels: steady when still, little lag when moving fast.
-- **Alignment.** The canvas sits in a container mirrored with
-  `transform: scaleX(-1)` (like a selfie camera); the background uses the
-  same `object-fit: cover` maths the video element used, and the virtual
-  camera has a webcam's field of view (~41° vertical) seen through that crop.
-  Each landmark is placed along its pixel's camera ray, around a plane 0.5 m
-  away, offset by MediaPipe's relative depth.
-- **Curved wound.** A 32×32 grid is rebuilt every frame from landmarks 0, 1,
-  5, 9, 13 and 17 (smooth curves along the wrist and knuckle rows, the heel
-  mirrored from the thumb base), with their depth and a slight cup, so the
-  wound bends and foreshortens with the palm. UVs are fixed in palm space,
-  centred between landmarks 0 and 9. The displacement map runs on this mesh
-  (×3) so the swollen rim bulges when the hand tilts. Palm normal =
-  (5−0)×(17−0), flipped for left hands; the wound fades out between 55° and
-  75° away from the camera.
-- **On the skin.** Every few frames the skin in a ring around the wound is
-  read from a small downscaled canvas; ambient and directional lights follow
-  its brightness and colour, and the wound's skin-coloured parts take its
-  tone. The bruise multiplies the picture (real skin shows through), the cut
-  and wet blood are opaque, and every edge is feathered. The displacement
-  depth darkens the cavity, and a contact shadow sits under the rim. Wet
-  blood gets clearcoat 1.0 (from a blood mask); the rest is matte.
+  behind it therefore always come from the same frame. **Debug** shows the
+  frame IDs to prove it.
+- **The palm as a rigid body.** The wound is attached to one pose: the palm's.
+  Only landmarks 0, 1, 5, 9, 13 and 17 (wrist, thumb base, the four
+  knuckles) take part, so moving your fingers never moves the wound. Their
+  shape is captured once as a template from the first 10 stable frames, then
+  each frame the template is fitted to MediaPipe's metric world landmarks by
+  a least-squares rigid fit (Kabsch, via Horn's quaternion method). That
+  gives the rotation. Position comes from the 2D landmarks (their weighted
+  centroid, corrected for perspective). Depth comes from the palm's apparent
+  size: the turned template, scaled to a real 8 cm palm (index to pinky
+  knuckle), is fitted to all six image points, so a tilted palm isn't read as
+  a further one. MediaPipe's per-landmark image z isn't used.
+- **Smoothing the pose, not the landmarks.** One Euro filters on the image
+  position (min cutoff 1.2 Hz, β 0.03), on the palm's apparent size (0.3 Hz,
+  on a log scale) and on the rotation (a quaternion One Euro whose speed
+  term is a smoothed angular-velocity vector, so noise doesn't read as
+  turning). A deadband holds the pose exactly still for changes under
+  0.3 px. Since rendering is frame-locked, the only lag left is the filters'
+  own; it's cancelled by stepping each axis forward along its velocity by its
+  filter's lag, at most 20 ms. The filters run on the frame's capture time.
+  A dropout under 150 ms keeps the last pose.
+- **The wound model.** `Wound.glb` is recentred, its long axis (Z) scaled to
+  5 cm (8 cm palm) and its thickness in proportion: rim about +1.9 mm, cut
+  about −1.8 mm. Skin level is the height of the model's open outer edge,
+  not its lowest point. Model +Y is the palm normal. It lies along the line
+  from between the index and middle knuckles towards the thumb base,
+  halfway along (`WOUND_ALONG`, `WOUND_ANGLE_DEG`, `WOUND_OFFSET` in
+  `src/lib/palmModel.ts`). The model's own material and UVs aren't used.
+- **Bent onto the palm.** The palm's surface is a bilinear patch through the
+  template's wrist, thumb base, index and pinky knuckles, minus a 3 mm cup
+  in the middle. The vertex shader places each wound vertex on that surface
+  and raises it along the surface normal by its height, turning its normal to
+  match, so the wound wraps the palm. All of it happens on the GPU from a few
+  uniforms; the object's matrix is just the palm pose. The wound fades out
+  between 55° and 75° away from the camera.
+- **Looking real.** A custom physical material (`onBeforeCompile`):
+  - Colour comes from each vertex's height and nearness to the cut: blood
+    #3a0508–#5a0a0f in the depths, raw #8b1a1a walls with mottling, the rim
+    as your own skin tone pushed towards inflamed red, and an outer edge that
+    fades into your skin (alpha to 0).
+  - Wet clearcoat (roughness 0.1) is only in the cut; elsewhere roughness is 0.6.
+  - Occlusion comes from depth and creases.
+  - Procedural micro-bumps.
+  - Subsurface scattering is faked with wrapped lighting and a red tint.
+  - Soft reflections come from a studio environment map.
+  - The purple-blue bruise and a contact shadow around the rim multiply the
+    camera picture, so the real skin's texture shows through.
+- **On the skin.** Every few frames the skin around the wound is read from a
+  small downscaled canvas. The ambient and directional lights follow its
+  brightness and colour, and the rim takes its tone.
 - **Camera matching.** The wound is rendered on its own and laid over the
   picture with a 0.7-camera-pixel blur, grain the size of a camera pixel at
   the measured noise level, and slightly lower saturation and contrast.
 - **Occlusion.** An invisible stand-in for your hand (finger capsules plus the
-  palm surface, pushed just behind the skin) writes depth only, so curled
-  fingers or the back of the hand hide the wound. `src/lib/handOccluder.ts`.
+  palm surface, 6 mm behind the skin) writes depth only, so curled fingers or
+  the back of the hand hide the wound. If fingers cover a lot of it, it fades
+  out rather than showing slivers. `src/lib/handOccluder.ts`.
 - **Closed hand.** When the fingertips come in towards the wrist (openness
   below 1.15, back above 1.3) the wound fades out over 200 ms and the status
   pill says "Open your hand".
@@ -301,20 +343,29 @@ overlap the outline behind it a little.
 
 ## Tuning
 
-- `src/components/PalmInjury.tsx`: relief (`DISPLACEMENT_GAIN`), fade angles,
-  skin matching, cavity darkening, bruise strength.
+- `src/lib/palmModel.ts`: where the wound sits (`WOUND_ALONG`,
+  `WOUND_ANGLE_DEG`, `WOUND_OFFSET`), the palm's cup (`PALM_BOW`), the
+  assumed palm size.
+- `src/lib/woundGeometry.ts`: the wound's length (`WOUND_LENGTH`) and how
+  wide its edge blends into the skin.
+- `src/lib/woundShaders.ts`: `WOUND_LOOK` (colours, wetness, subsurface,
+  occlusion, micro-bumps) and `BRUISE_LOOK`.
+- `src/lib/poseFilter.ts`: smoothing, deadband and lead.
+- `src/components/WoundModel.tsx`: fade angles, finger-coverage fade.
 - `src/components/WebcamCompositor.tsx`: blur, saturation, contrast, grain
   bounds.
-- `src/lib/palmMesh.ts`: wound size and placement in the palm, cup depth.
-- `src/lib/oneEuroFilter.ts`: filter parameters.
-- `src/lib/injury/generateInjury.ts`: the wound's colours and shapes.
 
 ## Known limits
 
-- The hand stand-in is an approximation (finger capsules and the palm mesh),
-  so the wound's cut-off edges follow your hand only roughly, and MediaPipe's
-  depth estimate is noisy, so the palm's curvature can wobble a little.
-- The palm mesh follows six landmarks and a fixed cup; it doesn't follow
+- The hand stand-in is an approximation (finger capsules and the palm
+  surface), so the wound's cut-off edges follow your hand only roughly.
+- Depth assumes an 8 cm palm and a ~41° webcam field of view. A smaller or
+  larger hand, or a wider lens, makes the wound a little too large or small
+  (it still stays in place on the image).
+- The palm's shape is captured when the hand comes into view. If that
+  happens while the palm is strongly cupped, the surface keeps that shape
+  until the hand leaves the view for a second and comes back.
+- The palm surface follows six landmarks and a fixed cup; it doesn't follow
   palm creases or fine skin folds.
 - Light matching assumes the light falls on the palm roughly as it does on
   the reference skin tone; very coloured lighting is matched only halfway.

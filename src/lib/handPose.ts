@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { LM } from './tracking';
+import { createCameraPalm, type CameraPalm } from './webcamPalm';
 
 /**
  * A tracked hand as the wound renderer consumes it, whatever produced it
@@ -8,6 +9,11 @@ import { LM } from './tracking';
 export interface HandPose {
   /** 21 points in world space, in MediaPipe's landmark order. */
   joints: THREE.Vector3[];
+  /**
+   * The palm as a rigid body in world space: the canonical palm frame's pose
+   * and the template it was fitted to. The wound is attached to this.
+   */
+  palm: CameraPalm;
   /** The user's actual hand. */
   isRightHand: boolean;
   /** A hand is currently tracked. */
@@ -25,6 +31,7 @@ export interface HandPose {
 export function createHandPose(): HandPose {
   return {
     joints: Array.from({ length: 21 }, () => new THREE.Vector3()),
+    palm: createCameraPalm(),
     isRightHand: true,
     tracked: false,
     open: false,

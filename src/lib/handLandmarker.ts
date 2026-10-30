@@ -14,7 +14,11 @@ export interface LoadedHandLandmarker {
   delegate: Delegate;
 }
 
-/** Creates a VIDEO-mode, single-hand landmarker, preferring the GPU delegate. */
+/**
+ * Creates a VIDEO-mode, single-hand landmarker, preferring the GPU delegate.
+ * `?delegate=cpu` in the URL skips the GPU (for testing in browsers whose
+ * WebGL is software-emulated, where the CPU path is much faster).
+ */
 export async function createHandLandmarker(): Promise<LoadedHandLandmarker> {
   const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
 
@@ -28,6 +32,9 @@ export async function createHandLandmarker(): Promise<LoadedHandLandmarker> {
       minTrackingConfidence: MIN_CONFIDENCE,
     });
 
+  if (new URLSearchParams(window.location.search).get('delegate')?.toLowerCase() === 'cpu') {
+    return { landmarker: await create('CPU'), delegate: 'CPU' };
+  }
   try {
     return { landmarker: await create('GPU'), delegate: 'GPU' };
   } catch (err) {

@@ -620,3 +620,11 @@ button {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+.hud-debug-layers label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text);
+}

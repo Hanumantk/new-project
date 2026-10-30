@@ -2,6 +2,7 @@ import { useEffect, useMemo, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
+import { JointPalmFitter } from '../lib/jointPalm';
 import {
   CLOSED_HAND_SCORE,
   OPEN_HAND_SCORE,
@@ -64,6 +65,7 @@ export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
       models: [] as THREE.Object3D[],
       handedness: new Map<HandSpace, XRHandedness>(),
       skinned: new WeakSet<THREE.Material>(),
+      palmFitter: new JointPalmFitter(),
     }),
     [],
   );
@@ -126,12 +128,14 @@ export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
     const hand = pickHand(state.hands, state.handedness);
     if (!hand) {
       out.tracked = false;
+      out.palm.valid = false;
       return;
     }
     for (let i = 0; i < XR_JOINTS.length; i++) {
       const joint = hand.joints[XR_JOINTS[i]];
       if (!joint || !joint.visible) {
         out.tracked = false;
+        out.palm.valid = false;
         return;
       }
       out.joints[i].copy(joint.position);
@@ -142,7 +146,7 @@ export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
       (palm?.jointRadius ?? DEFAULT_PALM_RADIUS) + (showHands ? MODEL_CLEARANCE : SKIN_CLEARANCE);
     out.isRightHand = state.handedness.get(hand) === 'right';
     out.open = opennessFromJoints(out.joints) > (out.open ? CLOSED_HAND_SCORE : OPEN_HAND_SCORE);
-    out.tracked = true;
+    out.tracked = state.palmFitter.update(out.joints, out.isRightHand, out.palm);
     out.version++;
   }, -1);
 

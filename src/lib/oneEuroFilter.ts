@@ -32,6 +32,7 @@ export class OneEuroFilter {
   private x = 0;
   private dx = 0;
   private t = 0;
+  private lastCutoff = 0;
   private initialised = false;
 
   constructor(private readonly params: OneEuroParams = DEFAULT_ONE_EURO) {}
@@ -54,12 +55,28 @@ export class OneEuroFilter {
     const rawDx = (value - this.x) / dt;
     this.dx += alpha(dCutoff, dt) * (rawDx - this.dx);
     const cutoff = minCutoff + beta * Math.abs(this.dx);
+    this.lastCutoff = cutoff;
     this.x += alpha(cutoff, dt) * (value - this.x);
     return this.x;
   }
 
+  /** The smoothed rate of change (units per second). */
+  get velocity() {
+    return this.dx;
+  }
+
+  /**
+   * How far the output trails a steadily moving input (s): the time constant
+   * of the low-pass at the current cutoff.
+   */
+  get lag() {
+    return this.lastCutoff > 0 ? 1 / (2 * Math.PI * this.lastCutoff) : 0;
+  }
+
   reset() {
     this.initialised = false;
+    this.dx = 0;
+    this.lastCutoff = 0;
   }
 }
 

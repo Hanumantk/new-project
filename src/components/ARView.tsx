@@ -8,14 +8,19 @@ import { LandmarkFilter } from '../lib/oneEuroFilter';
 import { SkinSampler } from '../lib/skinSampler';
 import { loadWoundOpacity, saveWoundOpacity } from '../lib/woundOpacity';
 import { createTrackingState, handOpenness, type TrackingState } from '../lib/tracking';
+import { WebcamPalmTracker } from '../lib/webcamPalm';
 import { ARScene } from './ARScene';
-import { Hud, type HandStatus, type HudStats } from './Hud';
+import { ALL_DEBUG_LAYERS, Hud, type DebugLayers, type HandStatus, type HudStats } from './Hud';
 
 /** Frames a new handedness label must persist before we believe it. */
 const HANDEDNESS_HYSTERESIS = 5;
 const STATS_UPDATE_MS = 500;
 /** Sample the skin's colour every this many frames. */
 const SKIN_SAMPLE_EVERY = 3;
+/** A hand lost for less than this (ms) keeps its last pose rather than vanishing. */
+const DROPOUT_HOLD_MS = 150;
+/** After the hand has been out of view this long, its palm shape is captured again. */
+const RECAPTURE_AFTER_MS = 1000;
 
 const UNSUPPORTED_MESSAGE =
   'This browser can’t access a camera here. Open the page over HTTPS (or localhost) in a recent Chrome, Edge, Firefox or Safari.';
@@ -47,6 +52,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
   const [stats, setStats] = useState<HudStats | null>(null);
   const [delegate, setDelegate] = useState<Delegate | null>(null);
   const [debug, setDebug] = useState(false);
+  const [debugLayers, setDebugLayers] = useState<DebugLayers>(ALL_DEBUG_LAYERS);
+  const showLandmarks = debug && debugLayers.landmarks;
   const [woundOpacity, setWoundOpacity] = useState(loadWoundOpacity);
   const [view, setView] = useState<'camera' | 'mesh'>('camera');
   useEffect(() => invalidateRef.current?.(), [view]);
@@ -60,13 +67,14 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
   }, [woundOpacity]);
 
   useEffect(() => {
-    debugRef.current = debug;
+    debugRef.current = showLandmarks;
     invalidateRef.current?.();
-    if (!debug) {
+    if (!showLandmarks) {
       const canvas = debugCanvasRef.current;
       canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     }
-  }, [debug]);
+  }, [showLandmarks]);
+  useEffect(() => invalidateRef.current?.(), [debug, debugLayers]);
 
   useEffect(() => {
     const video = videoRef.current!;
@@ -74,6 +82,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
     const debugCanvas = debugCanvasRef.current!;
     const debugCtx = debugCanvas.getContext('2d')!;
     const tracking = trackingRef.current;
+    // Development only: lets test scripts read the tracking state.
+    if (import.meta.env.DEV) (window as unknown as { __tracking?: TrackingState }).__tracking = tracking;
 
     // Each camera frame is copied here once; detection and the scene's
     // background both use this copy, so they always agree on the frame.
@@ -81,6 +91,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
     const captureCtx = capture.getContext('2d', { alpha: false })!;
     tracking.frame = capture;
     const landmarkFilter = new LandmarkFilter();
+    const palmTracker = new WebcamPalmTracker();
+    if (import.meta.env.DEV) (window as unknown as { __palmTracker?: WebcamPalmTracker }).__palmTracker = palmTracker;
     const skinSampler = new SkinSampler();
 
     let cancelled = false;
@@ -108,6 +120,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
     let lastVideoTime = -1;
     let lastTimestamp = 0;
     let handPresent = false;
+    let lastSeen = -Infinity;
+    let lastMediaTime = -Infinity;
     let status: HandStatus = 'none';
     let handednessVotes = 0;
     let detectTotal = 0;
@@ -115,8 +129,14 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
     let debugDirty = false;
     let videoFramesSeen = 0;
 
-    /** Captures the current video frame, detects on it and requests one render. */
-    const processFrame = (now: number) => {
+    /**
+     * Captures the current video frame, detects on it and requests one render.
+     * @param now when the frame is presented (ms), for detection's timestamps.
+     * @param mediaTime when the frame was captured (s): the pose filters run on
+     *   this clock, so their timing matches the hand's real motion even if a
+     *   frame is processed late.
+     */
+    const processFrame = (now: number, mediaTime: number) => {
       if (!landmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
         return;
       }
@@ -136,6 +156,20 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
       detectCount++;
 
       const raw = result.landmarks[0] ?? null;
+      const rawWorld = result.worldLandmarks[0] ?? null;
+      // A jump back in time (a looping test clip) is a cut, not motion.
+      if (mediaTime < lastMediaTime) palmTracker.lose();
+      lastMediaTime = mediaTime;
+      tracking.mediaTime = mediaTime;
+
+      // Brief dropout (a blurred frame, a missed detection): hold the last
+      // pose and show this frame with it, rather than flashing the wound off.
+      if (!raw && handPresent && now - lastSeen < DROPOUT_HOLD_MS) {
+        tracking.frameId++;
+        invalidateRef.current?.();
+        return;
+      }
+
       if (raw) {
         // We feed raw (unmirrored) camera frames; for those the label matches
         // the user's actual hand (verified against a known right-hand photo).
@@ -148,14 +182,39 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
             tracking.isRightHand = isRightHand;
             handednessVotes = 0;
             landmarkFilter.reset(); // a different hand: don't blend between them
+            palmTracker.lose();
           }
         } else {
           handednessVotes = 0;
         }
       } else {
         landmarkFilter.reset();
+        palmTracker.lose();
+        // Gone for a while: capture the palm's shape afresh when it's back.
+        if (now - lastSeen > RECAPTURE_AFTER_MS) palmTracker.template.reset();
       }
       const landmarks = raw ? landmarkFilter.filter(raw, timestamp / 1000, width, height) : null;
+
+      // The wound's anchor: the palm as a rigid body, fitted to the raw
+      // landmarks and filtered as a whole (never per landmark).
+      const palmValid =
+        raw !== null &&
+        rawWorld !== null &&
+        palmTracker.update(raw, rawWorld, width, height, tracking.isRightHand, mediaTime);
+      if (palmValid) {
+        const pose = palmTracker.pose;
+        const palm = tracking.palm;
+        palm.position.copy(pose.position);
+        palm.quaternion.copy(pose.quaternion);
+        palm.template.set(pose.template);
+        palm.templateVersion = pose.templateVersion;
+        palmTracker.joints(landmarks!, rawWorld!, tracking.joints);
+        tracking.jitter.px = palmTracker.jitter.rms;
+        tracking.jitter.rawPx = palmTracker.rawJitter.rms;
+        tracking.jitter.speed = palmTracker.rawJitter.speed;
+      }
+      tracking.palm.valid = palmValid;
+      if (raw) lastSeen = now;
       if (landmarks) {
         const openness = handOpenness(landmarks, width, height);
         tracking.handOpen = openness > (tracking.handOpen ? CLOSED_HAND_SCORE : OPEN_HAND_SCORE);
@@ -210,6 +269,7 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
         poseFrameId,
         backgroundFrameId,
         mismatches,
+        ...jitterReading(tracking),
       });
       statsRenders = renders;
       statsAt = at;
@@ -218,17 +278,17 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
     }, STATS_UPDATE_MS);
 
     // Preferred: run exactly once per new video frame, as it is presented.
-    const onVideoFrame: VideoFrameRequestCallback = (now) => {
+    const onVideoFrame: VideoFrameRequestCallback = (now, metadata) => {
       videoFrameHandle = video.requestVideoFrameCallback(onVideoFrame);
       videoFramesSeen++;
-      processFrame(now);
+      processFrame(now, metadata.mediaTime);
     };
     // Fallback: poll on animation frames and skip repeats.
     const onAnimationFrame = (now: number) => {
       rafId = requestAnimationFrame(onAnimationFrame);
       if (video.currentTime === lastVideoTime) return;
       lastVideoTime = video.currentTime;
-      processFrame(now);
+      processFrame(now, video.currentTime);
     };
     const startLoop = () => {
       if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
@@ -359,6 +419,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
             tracking={trackingRef}
             onReady={onSceneReady}
             debug={debug}
+            debugSurface={debug && debugLayers.surface}
+            debugBox={debug && debugLayers.box}
             woundOpacity={woundOpacityRef}
             view={view}
           />
@@ -373,6 +435,8 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
         source={sampleVideo ? 'Sample video' : null}
         debug={debug}
         onToggleDebug={() => setDebug((v) => !v)}
+        debugLayers={debugLayers}
+        onToggleDebugLayer={(layer) => setDebugLayers((l) => ({ ...l, [layer]: !l[layer] }))}
         woundOpacity={woundOpacity}
         onWoundOpacityChange={setWoundOpacity}
         view={view}
@@ -412,4 +476,13 @@ function cameraErrorMessage(err: unknown): string {
     default:
       return 'Something went wrong while starting the camera. Please try again.';
   }
+}
+
+/** Faster than this (video px/s), the hand counts as moving and jitter isn't meaningful. */
+const STILL_SPEED_PX = 40;
+
+function jitterReading(tracking: TrackingState): Pick<HudStats, 'jitterPx' | 'rawJitterPx'> {
+  const { px, rawPx, speed } = tracking.jitter;
+  if (!tracking.palm.valid || px === 0 || speed > STILL_SPEED_PX) return { jitterPx: null, rawJitterPx: null };
+  return { jitterPx: px, rawJitterPx: rawPx };
 }
