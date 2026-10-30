@@ -8,6 +8,8 @@ import {
   fitPalmSurface,
   palmHeight,
   placeWound,
+  PALM_SKIN_LIFT,
+  WOUND_ALONG,
   woundToPalm,
 } from './palmModel';
 import { rightPalm } from './palmFixtures';
@@ -58,8 +60,10 @@ describe('palm surface and wound placement', () => {
   canonicalPalm(rightPalm(), true, template);
   const s = fitPalmSurface(template, createPalmSurface());
 
-  it('passes through the wrist, thumb base, index and pinky knuckles, cupped in the middle', () => {
-    for (const k of [0, 1, 2, 5]) expect(palmHeight({ ...s, bowDepth: 0 }, template[k * 3], template[k * 3 + 2])).toBeCloseTo(template[k * 3 + 1], 9);
+  it('lies PALM_SKIN_LIFT above the wrist, thumb base, index and pinky knuckles, cupped in the middle', () => {
+    for (const k of [0, 1, 2, 5]) {
+      expect(palmHeight({ ...s, bowDepth: 0 }, template[k * 3], template[k * 3 + 2])).toBeCloseTo(template[k * 3 + 1] + PALM_SKIN_LIFT, 9);
+    }
     expect(palmHeight(s, s.bowX, s.bowZ)).toBeLessThan(palmHeight({ ...s, bowDepth: 0 }, s.bowX, s.bowZ) - 0.0029);
   });
 
@@ -71,19 +75,21 @@ describe('palm surface and wound placement', () => {
     expect(g[1]).toBeCloseTo((palmHeight(s, x, z + e) - palmHeight(s, x, z - e)) / (2 * e), 6);
   });
 
-  it('runs the wound from between the index and middle knuckles towards the thumb base', () => {
+  it('puts the wound in the middle of the palm, across it', () => {
     const p = placeWound(template, { x: 0, z: 0, angle: 0 });
-    const start = [(template[6] + template[9]) / 2, (template[8] + template[11]) / 2];
-    const thumb = [template[3], template[5]];
+    const index = [template[6], template[8]];
+    const pinky = [template[15], template[17]];
+    const wrist = [template[0], template[2]];
+    const knuckles = [(index[0] + pinky[0]) / 2, (index[1] + pinky[1]) / 2];
     const c = new Float64Array(2);
     woundToPalm(p, 0, 0, c);
-    expect(c[0]).toBeCloseTo((start[0] + thumb[0]) / 2, 9);
-    expect(c[1]).toBeCloseTo((start[1] + thumb[1]) / 2, 9);
-    // The wound's +Z (long axis) points at the thumb base.
+    expect(c[0]).toBeCloseTo(knuckles[0] + (wrist[0] - knuckles[0]) * WOUND_ALONG, 9);
+    expect(c[1]).toBeCloseTo(knuckles[1] + (wrist[1] - knuckles[1]) * WOUND_ALONG, 9);
+    // The wound's +Z (long axis) runs parallel to the knuckle row, towards the index.
     const tip = new Float64Array(2);
     woundToPalm(p, 0, 0.01, tip);
     const dir = [tip[0] - c[0], tip[1] - c[1]];
-    const want = [thumb[0] - start[0], thumb[1] - start[1]];
+    const want = [index[0] - pinky[0], index[1] - pinky[1]];
     const cos = (dir[0] * want[0] + dir[1] * want[1]) / (Math.hypot(...dir) * Math.hypot(...want));
     expect(cos).toBeCloseTo(1, 9);
   });

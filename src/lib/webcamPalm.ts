@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Landmark, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import {
   PALM_LANDMARKS,
+  PALM_SKIN_LIFT,
   PALM_WEIGHTS,
   PalmTemplate,
   REAL_PALM_WIDTH,
@@ -15,6 +16,7 @@ import {
 } from './palmModel';
 import { PalmPoseFilter, type PalmMeasurement } from './poseFilter';
 import { refinePalmPose } from './palmPnP';
+import { SKIN_LOCK, SkinLock, type PatchReader, type SkinLockParams } from './skinFlow';
 import { fitRotation } from './rigidFit';
 
 /** Vertical field of view of a typical 16:9 laptop webcam (~65° horizontal). */
@@ -132,9 +134,27 @@ export interface PalmTrackerOptions {
   refinePx: number | null;
   /** The point whose image position is filtered and kept exact: the wound's centre or the palm's. */
   anchor: 'wound' | 'centroid';
+  /** Per-point weights of the image landmarks in the refinement (PALM_LANDMARKS order). */
+  imageWeights: readonly number[];
+  /** Height of the palm's skin above the joints (metres, 8 cm palm). */
+  skinLift: number;
+  /** Pin the anchor to the skin by optical flow (null: landmarks only). */
+  skinLock: SkinLockParams | null;
 }
 
-export const PALM_TRACKER: PalmTrackerOptions = { refinePx: 400, anchor: 'wound' };
+/**
+ * In the image the wrist and thumb-base landmarks wander over the skin as the
+ * hand turns far more than the knuckles do, so they count for less there.
+ */
+export const IMAGE_WEIGHTS = [0.3, 0.2, 1, 1, 1, 1] as const;
+
+export const PALM_TRACKER: PalmTrackerOptions = {
+  refinePx: 100,
+  anchor: 'wound',
+  imageWeights: IMAGE_WEIGHTS,
+  skinLift: PALM_SKIN_LIFT,
+  skinLock: SKIN_LOCK,
+};
 
 export class WebcamPalmTracker {
   readonly template = new PalmTemplate();
@@ -143,6 +163,9 @@ export class WebcamPalmTracker {
   /** Image position of the wound's centre (video px), filtered and raw, for the jitter meter. */
   readonly woundPx = { x: 0, y: 0, rawX: 0, rawY: 0 };
   readonly jitter = new JitterMeter();
+  /** The wound's centre pinned to the skin's own movement. */
+  readonly skinLock = new SkinLock();
+  private lockedTemplate = -2;
   readonly rawJitter = new JitterMeter();
 
   private readonly world: Vec3[] = PALM_LANDMARKS.map(() => ({ x: 0, y: 0, z: 0 }));
@@ -186,6 +209,7 @@ export class WebcamPalmTracker {
     videoHeight: number,
     isRightHand: boolean,
     t: number,
+    readPatch: PatchReader | null = null,
   ): boolean {
     this.focal = focalPx(videoHeight);
     this.cx = videoWidth / 2;
@@ -262,7 +286,7 @@ export class WebcamPalmTracker {
         this.imagePx[k * 2 + 1] = lm.y * videoHeight;
       }
       this.priorQ.copy(q);
-      refinePalmPose(template, PALM_WEIGHTS, this.imagePx, this.camera, this.priorQ, this.options.refinePx, fitQ, fitPos);
+      refinePalmPose(template, this.options.imageWeights, this.imagePx, this.camera, this.priorQ, this.options.refinePx, fitQ, fitPos);
     }
 
     // The anchor (the wound's centre): its image position and depth are what's filtered.
@@ -276,6 +300,20 @@ export class WebcamPalmTracker {
     m.v = this.cy - (this.focal * a.y) / -a.z;
     m.scale = this.focal / -a.z;
     m.q.copy(fitQ);
+
+    // Frame to frame, the anchor follows the skin itself.
+    const lockParams = this.options.skinLock;
+    if (lockParams) {
+      const version = this.template.ready ? this.template.version : -1;
+      if (version !== this.lockedTemplate) {
+        // The anchor is a different point on the palm now.
+        this.skinLock.reset();
+        this.lockedTemplate = version;
+      }
+      this.skinLock.update(readPatch, m.u, m.v, m.scale, t, lockParams);
+      m.u = this.skinLock.x;
+      m.v = this.skinLock.y;
+    }
 
     const f = this.filter.update(m);
     this.fromAnchor(f.u, f.v, f.scale, f.q, this.pose.position);
@@ -318,6 +356,7 @@ export class WebcamPalmTracker {
   /** Forget the hand (it's gone): filters and the meters restart; the template is kept per hand. */
   lose() {
     this.filter.reset();
+    this.skinLock.reset();
     this.pose.valid = false;
     this.jitter.reset();
     this.rawJitter.reset();
@@ -385,7 +424,7 @@ export class WebcamPalmTracker {
   private updateWoundCentre(template: Float64Array) {
     const version = this.template.ready ? this.template.version : -1;
     if (version !== this.surfaceVersion || version === -1) {
-      fitPalmSurface(template, this.surface);
+      fitPalmSurface(template, this.surface, this.options.skinLift);
       placeWound(template, this.placement);
       this.surfaceVersion = version;
     }

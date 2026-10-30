@@ -25,17 +25,25 @@ export interface Vec3 {
 }
 
 /**
- * Where the wound goes: along the line from between the index and middle
- * knuckles towards the thumb base, this far along it (0..1)…
+ * Where the wound goes: the middle of the palm, this far along the line from
+ * the middle of the knuckle row (between landmarks 5 and 17) to the wrist (0..1)…
  */
-export const WOUND_ALONG = 0.5;
-/** …turned this much more about the palm normal (degrees; + turns it towards the fingers)… */
+export const WOUND_ALONG = 0.45;
+/**
+ * …lying across the palm (parallel to the knuckle row, pinky → index), turned
+ * this much more about the palm normal (degrees)…
+ */
 export const WOUND_ANGLE_DEG = 0;
 /** …and moved by this much in the palm plane (metres: across towards the index side, along towards the fingers). */
 export const WOUND_OFFSET: readonly [number, number] = [0, 0];
 
 /** How far the middle of the palm sinks below the patch through the joints (metres): its cup. */
 export const PALM_BOW = 0.003;
+/**
+ * The landmarks are joint centres inside the hand; the palm's skin lies this
+ * far above the plane through them (metres, for an 8 cm palm).
+ */
+export const PALM_SKIN_LIFT = 0.015;
 
 const totalWeight = W.reduce((a, b) => a + b, 0);
 
@@ -183,8 +191,8 @@ export function createPalmSurface(): PalmSurface {
   return { c0: 0, c1: 0, c2: 0, c3: 0, bowX: 0, bowZ: 0, bowRx: 0.04, bowRz: 0.04, bowDepth: 0, minX: -0.05, maxX: 0.05, minZ: -0.05, maxZ: 0.05 };
 }
 
-/** Fits the surface to a template's canonical points. */
-export function fitPalmSurface(template: ArrayLike<number>, out: PalmSurface): PalmSurface {
+/** Fits the surface to a template's canonical points, raised by `lift` onto the skin. */
+export function fitPalmSurface(template: ArrayLike<number>, out: PalmSurface, lift = PALM_SKIN_LIFT): PalmSurface {
   const corner = [IDX.wrist, IDX.thumb, IDX.index, IDX.pinky];
   // Solve [1 x z xz]·c = y exactly through the four corners.
   const m: number[][] = corner.map((k) => {
@@ -197,6 +205,7 @@ export function fitPalmSurface(template: ArrayLike<number>, out: PalmSurface): P
     // Degenerate quad: a flat plane through the centroid.
     out.c0 = out.c1 = out.c2 = out.c3 = 0;
   }
+  out.c0 += lift;
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, sx = 0, sz = 0;
   for (let k = 0; k < 6; k++) {
     const x = template[k * 3], z = template[k * 3 + 2];
@@ -252,17 +261,17 @@ export interface WoundPlacement {
 }
 
 /**
- * The wound's centre and direction from a template: along the line from
- * between the index and middle knuckles towards the thumb base.
+ * The wound's centre and direction from a template: in the middle of the
+ * palm, its long axis across it, parallel to the knuckle row.
  */
 export function placeWound(template: ArrayLike<number>, out: WoundPlacement): WoundPlacement {
-  const sx = (template[IDX.index * 3] + template[IDX.middle * 3]) / 2;
-  const sz = (template[IDX.index * 3 + 2] + template[IDX.middle * 3 + 2]) / 2;
-  const ex = template[IDX.thumb * 3];
-  const ez = template[IDX.thumb * 3 + 2];
-  out.x = sx + (ex - sx) * WOUND_ALONG + WOUND_OFFSET[0];
-  out.z = sz + (ez - sz) * WOUND_ALONG + WOUND_OFFSET[1];
-  out.angle = Math.atan2(ex - sx, ez - sz) + (WOUND_ANGLE_DEG * Math.PI) / 180;
+  const ix = template[IDX.index * 3], iz = template[IDX.index * 3 + 2];
+  const px = template[IDX.pinky * 3], pz = template[IDX.pinky * 3 + 2];
+  const kx = (ix + px) / 2, kz = (iz + pz) / 2;
+  const wx = template[IDX.wrist * 3], wz = template[IDX.wrist * 3 + 2];
+  out.x = kx + (wx - kx) * WOUND_ALONG + WOUND_OFFSET[0];
+  out.z = kz + (wz - kz) * WOUND_ALONG + WOUND_OFFSET[1];
+  out.angle = Math.atan2(ix - px, iz - pz) + (WOUND_ANGLE_DEG * Math.PI) / 180;
   return out;
 }
 

@@ -89,6 +89,18 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
     // background both use this copy, so they always agree on the frame.
     const capture = document.createElement('canvas');
     const captureCtx = capture.getContext('2d', { alpha: false })!;
+    // Small squares of the frame, read back for following the skin by optical flow.
+    const patch = document.createElement('canvas');
+    const patchCtx = patch.getContext('2d', { alpha: false, willReadFrequently: true })!;
+    const readPatch = (x0: number, y0: number, size: number, out: Float32Array) => {
+      if (patch.width !== size) patch.width = patch.height = size;
+      patchCtx.fillStyle = '#000';
+      patchCtx.fillRect(0, 0, size, size);
+      patchCtx.drawImage(capture, x0, y0, size, size, 0, 0, size, size);
+      const rgba = patchCtx.getImageData(0, 0, size, size).data;
+      for (let i = 0, j = 0; i < out.length; i++, j += 4) out[i] = 0.299 * rgba[j] + 0.587 * rgba[j + 1] + 0.114 * rgba[j + 2];
+      return true;
+    };
     tracking.frame = capture;
     const landmarkFilter = new LandmarkFilter();
     const palmTracker = new WebcamPalmTracker();
@@ -200,7 +212,7 @@ export function ARView({ onError, onStop, sampleVideo = null }: ARViewProps) {
       const palmValid =
         raw !== null &&
         rawWorld !== null &&
-        palmTracker.update(raw, rawWorld, width, height, tracking.isRightHand, mediaTime);
+        palmTracker.update(raw, rawWorld, width, height, tracking.isRightHand, mediaTime, readPatch);
       if (palmValid) {
         const pose = palmTracker.pose;
         const palm = tracking.palm;

@@ -292,31 +292,34 @@ overlap the outline behind it a little.
   filter's lag, at most 20 ms. The filters run on the frame's capture time.
   A dropout under 150 ms keeps the last pose.
 - **The wound model.** `Wound.glb` is recentred, its long axis (Z) scaled to
-  5 cm (8 cm palm) and its thickness in proportion: rim about +1.9 mm, cut
-  about −1.8 mm. Skin level is the height of the model's open outer edge,
-  not its lowest point. Model +Y is the palm normal. It lies along the line
-  from between the index and middle knuckles towards the thumb base,
-  halfway along (`WOUND_ALONG`, `WOUND_ANGLE_DEG`, `WOUND_OFFSET` in
+  6.5 cm (8 cm palm) and its thickness in proportion: rim about +2.5 mm, cut
+  about −2.4 mm. Skin level is the height of the model's open outer edge,
+  not its lowest point. Model +Y is the palm normal. It lies across the
+  middle of the palm, parallel to the knuckle row, 45% of the way from the
+  knuckles to the wrist (`WOUND_ALONG`, `WOUND_ANGLE_DEG`, `WOUND_OFFSET` in
   `src/lib/palmModel.ts`). The model's own material and UVs aren't used.
 - **Bent onto the palm.** The palm's surface is a bilinear patch through the
   template's wrist, thumb base, index and pinky knuckles, minus a 3 mm cup
-  in the middle. The vertex shader places each wound vertex on that surface
+  in the middle, raised 1.5 cm (`PALM_SKIN_LIFT`). The landmarks are joint
+  centres inside the hand, and the skin lies above them. Without the lift
+  the wound would sit inside the hand and slide over the skin whenever the
+  palm turns. The vertex shader places each wound vertex on that surface
   and raises it along the surface normal by its height, turning its normal to
   match, so the wound wraps the palm. All of it happens on the GPU from a few
   uniforms; the object's matrix is just the palm pose. The wound fades out
   between 55° and 75° away from the camera.
 - **Looking real.** A custom physical material (`onBeforeCompile`):
   - Colour comes from each vertex's height and nearness to the cut: blood
-    #3a0508–#5a0a0f in the depths, raw #8b1a1a walls with mottling, the rim
-    as your own skin tone pushed towards inflamed red, and an outer edge that
+    #3a0508–#5a0a0f in the depths, raw #8b1a1a walls with mottling, the
+    swollen rim in your own skin tone (no red border), and an outer edge that
     fades into your skin (alpha to 0).
   - Wet clearcoat (roughness 0.1) is only in the cut; elsewhere roughness is 0.6.
   - Occlusion comes from depth and creases.
   - Procedural micro-bumps.
   - Subsurface scattering is faked with wrapped lighting and a red tint.
   - Soft reflections come from a studio environment map.
-  - The purple-blue bruise and a contact shadow around the rim multiply the
-    camera picture, so the real skin's texture shows through.
+  - A faint purple-blue bruise and a contact shadow around the rim multiply
+    the camera picture, so the real skin's texture shows through.
 - **On the skin.** Every few frames the skin around the wound is read from a
   small downscaled canvas. The ambient and directional lights follow its
   brightness and colour, and the rim takes its tone.
