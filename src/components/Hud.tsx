@@ -1,15 +1,13 @@
 import type { Delegate } from '../lib/handLandmarker';
-import { GlassCluster, GlassGrid, GlassLabel, GlassSlider, GlassToggle, at } from './glass/Glass';
-import type { GlassIconName } from './glass/icons';
+import { OpacitySlider } from './OpacitySlider';
 
 /** No hand / a closed hand (wound hidden) / an open hand (wound on the palm). */
 export type HandStatus = 'none' | 'closed' | 'open';
 
-/** The status tile: a short title and a detail line (2×1 tiles are narrow). */
-const STATUS_TILE: Record<HandStatus, { title: string; detail: string }> = {
-  none: { title: 'No hand', detail: 'Show it' },
-  closed: { title: 'Closed', detail: 'Open it' },
-  open: { title: 'Tracking', detail: 'Hand' },
+const STATUS_LABEL: Record<HandStatus, string> = {
+  none: 'Show your hand',
+  closed: 'Open your hand',
+  open: 'Hand detected',
 };
 
 export interface HudStats {
@@ -41,13 +39,6 @@ const DEBUG_LAYER_LABEL: Record<DebugLayer, string> = {
   surface: 'Palm surface',
   box: 'Wound box',
   jitter: 'Jitter',
-};
-
-const DEBUG_LAYER_ICON: Record<DebugLayer, GlassIconName> = {
-  landmarks: 'points',
-  surface: 'surface',
-  box: 'box',
-  jitter: 'pulse',
 };
 
 /** Target for the wound's jitter with the hand at rest. */
@@ -87,83 +78,79 @@ export function Hud({
   onViewChange,
   onStop,
 }: HudProps) {
-  const status = STATUS_TILE[handStatus];
   return (
     <div className="hud">
-      {/* Control Center style: Clear glass tiles over the video, on the kit's 68 px grid. */}
-      <GlassGrid label="Controls">
-        <GlassLabel
-          style={at(1, 1, 2)}
-          material="clear"
-          icon="hand"
-          title={status.title}
-          detail={status.detail}
-          on={handStatus === 'open'}
-          role="status"
-        />
-        <GlassLabel
-          style={at(3, 1, 2)}
-          material="clear"
-          icon="pulse"
-          tooltip={delegate ? `Hand detection on the ${delegate}` : undefined}
-          title={`${stats ? Math.round(stats.renderFps) : '–'} FPS`}
-          detail={`${stats?.detectMs != null ? stats.detectMs.toFixed(1) : '–'} ms`}
-        />
-        <GlassSlider
-          style={at(1, 2, 1, 2)}
-          material="clear"
-          icon="drop"
-          label="Wound opacity"
-          value={woundOpacity}
-          onChange={onWoundOpacityChange}
-        />
-        <GlassToggle style={at(2, 2)} material="clear" icon="camera" label="Camera view" on={view === 'camera'} onClick={() => onViewChange('camera')} />
-        <GlassToggle style={at(3, 2)} material="clear" icon="mesh" label="Mesh view" on={view === 'mesh'} onClick={() => onViewChange('mesh')} />
-        <GlassToggle style={at(4, 2)} material="clear" icon="bug" label="Debug" on={debug} onClick={onToggleDebug} />
-        <GlassToggle
-          style={at(2, 3)}
-          material="clear"
-          icon="stop"
-          label={source ? `Stop ${source.toLowerCase()}` : 'Stop camera'}
-          onClick={onStop}
-        />
-        {debug && (
-          <GlassCluster
-            style={at(3, 3, 2, 2)}
-            material="clear"
-            label="Debug overlays"
-            items={(Object.keys(DEBUG_LAYER_LABEL) as DebugLayer[]).map((layer, i) => ({
-              icon: DEBUG_LAYER_ICON[layer],
-              label: DEBUG_LAYER_LABEL[layer],
-              on: debugLayers[layer],
-              onClick: () => onToggleDebugLayer(layer),
-              accent: i < 2 ? 'blue' : 'green',
-            }))}
-          />
-        )}
-        {debug && stats && (
-          <GlassLabel
-            style={at(1, 4, 2)}
-            material="clear"
-            icon="sparkles"
-            title={stats.mismatches ? `${stats.mismatches} out of sync` : 'In sync'}
-            detail={`frame ${stats.frameId}`}
-            on={!stats.mismatches}
-            role="status"
-          />
-        )}
-        {debug && stats && debugLayers.jitter && (
-          <GlassLabel
-            style={at(1, 5, 2)}
-            material="clear"
-            icon="pulse"
-            title={stats.jitterPx == null ? 'Moving' : `${stats.jitterPx.toFixed(2)} px`}
-            detail={stats.rawJitterPx != null ? `raw ${stats.rawJitterPx.toFixed(2)}` : 'jitter'}
-            on={stats.jitterPx != null && stats.jitterPx < JITTER_TARGET_PX}
-            role="status"
-          />
-        )}
-      </GlassGrid>
+      <div className="panel hud-status">
+        <span className={`pill pill--${handStatus}`} role="status">
+          <span className="pill-dot" aria-hidden />
+          {STATUS_LABEL[handStatus]}
+        </span>
+        <span className="fps" title={delegate ? `Inference on ${delegate}` : undefined}>
+          <strong>{stats ? Math.round(stats.renderFps) : '–'}</strong> FPS
+          <span className="hud-sep" aria-hidden>·</span>
+          <strong>{stats?.detectMs != null ? stats.detectMs.toFixed(1) : '–'}</strong> ms detect
+          {delegate && <span className="delegate">{delegate}</span>}
+        </span>
+      </div>
+      {debug && stats && (
+        <div className="panel hud-debug" aria-label="Frame sync">
+          <span>
+            frame <strong>{stats.frameId}</strong>
+          </span>
+          <span>
+            pose <strong>{stats.poseFrameId}</strong>
+          </span>
+          <span>
+            background <strong>{stats.backgroundFrameId}</strong>
+          </span>
+          <span className={stats.mismatches ? 'hud-bad' : 'hud-good'}>
+            {stats.mismatches ? `${stats.mismatches} out of sync` : 'in sync'}
+          </span>
+          {debugLayers.jitter && (
+            <span
+              className={stats.jitterPx == null ? undefined : stats.jitterPx < JITTER_TARGET_PX ? 'hud-good' : 'hud-bad'}
+              title="Wound centre, RMS over the last second with the hand still (unfiltered pose in brackets)"
+            >
+              jitter{' '}
+              <strong>{stats.jitterPx == null ? 'moving' : `${stats.jitterPx.toFixed(2)} px`}</strong>
+              {stats.rawJitterPx != null && ` (raw ${stats.rawJitterPx.toFixed(2)})`}
+            </span>
+          )}
+        </div>
+      )}
+      {debug && (
+        <div className="panel hud-debug hud-debug-layers" role="group" aria-label="Debug overlays">
+          {(Object.keys(DEBUG_LAYER_LABEL) as DebugLayer[]).map((layer) => (
+            <label key={layer}>
+              <input type="checkbox" checked={debugLayers[layer]} onChange={() => onToggleDebugLayer(layer)} />
+              {DEBUG_LAYER_LABEL[layer]}
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="panel hud-segmented" role="radiogroup" aria-label="View">
+        {(['camera', 'mesh'] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={view === option}
+            className={view === option ? 'is-selected' : ''}
+            onClick={() => onViewChange(option)}
+          >
+            {option === 'camera' ? 'Camera' : 'Mesh'}
+          </button>
+        ))}
+      </div>
+      <OpacitySlider value={woundOpacity} onChange={onWoundOpacityChange} />
+      <div className="hud-actions">
+        <button type="button" className="panel button" aria-pressed={debug} onClick={onToggleDebug}>
+          Debug
+        </button>
+        <button type="button" className="panel button button--quiet" onClick={onStop}>
+          {source ? `Stop ${source.toLowerCase()}` : 'Stop camera'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,14 +1,22 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { GLASS_FONT, GLASS_TEXT, GLASS_TEXT_ON_SELECTED, drawGlassSlider, drawGlassTile, drawSymbol } from '../lib/glassCanvas';
+import {
+  GLASS_FONT,
+  GLASS_TEXT,
+  GLASS_TEXT_MUTED,
+  GLASS_TEXT_ON_SELECTED,
+  drawGlassButton,
+  drawGlassPanel,
+  drawGlassSlider,
+} from '../lib/glassCanvas';
 import { SKIN_PRESETS, requestReattach, setXRPrefs, xrPrefs, type HandSide } from '../lib/xrPrefs';
 
 /** Panel size (metres) and canvas resolution. */
 const W = 0.24;
-const H = 0.17;
+const H = 0.13;
 const PX = 1200;
-const PY = 850;
+const PY = 650;
 /** The skin-height slider's range (± mm). */
 const HEIGHT_RANGE_MM = 5;
 /** A fingertip counts as pressing within this distance of the face (m)… */
@@ -34,24 +42,22 @@ interface Region {
   y1: number;
 }
 
-// Layout (metres), as Control Center tiles: row 1 pills (hand, Calibrate,
-// Mesh), row 2 round swatches and Auto, then two sideways sliders.
-const ROW1 = { y0: 0.048, y1: 0.08 };
-const ROW2 = { y0: 0.008, y1: 0.036 };
+// Layout (metres): row 1 hand + re-attach, row 2 skin swatches, row 3 fine tone.
 const REGIONS: Region[] = [
-  { target: { kind: 'hand', side: 'left' }, x0: -0.115, x1: -0.07, ...ROW1 },
-  { target: { kind: 'hand', side: 'right' }, x0: -0.065, x1: -0.02, ...ROW1 },
-  { target: { kind: 'reattach' }, x0: -0.015, x1: 0.06, ...ROW1 },
-  { target: { kind: 'mesh' }, x0: 0.065, x1: 0.115, ...ROW1 },
+  { target: { kind: 'hand', side: 'left' }, x0: -0.11, x1: -0.065, y0: 0.032, y1: 0.06 },
+  { target: { kind: 'hand', side: 'right' }, x0: -0.06, x1: -0.015, y0: 0.032, y1: 0.06 },
+  { target: { kind: 'reattach' }, x0: -0.005, x1: 0.058, y0: 0.032, y1: 0.06 },
+  { target: { kind: 'mesh' }, x0: 0.063, x1: 0.11, y0: 0.032, y1: 0.06 },
   ...SKIN_PRESETS.map((_, index) => ({
     target: { kind: 'skin', index } as Target,
-    x0: -0.115 + index * 0.033,
-    x1: -0.115 + index * 0.033 + 0.028,
-    ...ROW2,
+    x0: -0.11 + index * 0.031,
+    x1: -0.11 + index * 0.031 + 0.026,
+    y0: -0.001,
+    y1: 0.026,
   })),
-  { target: { kind: 'auto' }, x0: 0.083, x1: 0.115, ...ROW2 },
-  { target: { kind: 'fine' }, x0: -0.115, x1: 0.115, y0: -0.032, y1: -0.002 },
-  { target: { kind: 'height' }, x0: -0.115, x1: 0.115, y0: -0.072, y1: -0.042 },
+  { target: { kind: 'auto' }, x0: 0.076, x1: 0.11, y0: -0.001, y1: 0.026 },
+  { target: { kind: 'fine' }, x0: -0.07, x1: 0.1, y0: -0.031, y1: -0.011 },
+  { target: { kind: 'height' }, x0: -0.07, x1: 0.1, y0: -0.059, y1: -0.039 },
 ];
 
 /**
@@ -177,65 +183,60 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
   const ctx = canvas.getContext('2d')!;
   const k = PX / W;
   const rect = (r: Region) => [(r.x0 + W / 2) * k, (H / 2 - r.y1) * k, (r.x1 - r.x0) * k, (r.y1 - r.y0) * k] as const;
-  // No backing: the tiles float on their own, like Control Center.
   ctx.clearRect(0, 0, PX, PY);
+  drawGlassPanel(ctx, 4, 4, PX - 8, PY - 8, 64);
+  ctx.font = `600 42px ${GLASS_FONT}`;
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const r of REGIONS) {
     const [x, y, w, h] = rect(r);
     const t = r.target;
     if (t.kind === 'skin') {
-      // A round swatch of the tone, glass-rimmed; the chosen one gets a white ring.
-      drawGlassTile(ctx, x, y, w, h, { tint: SKIN_PRESETS[t.index] });
+      // Swatch: the colour as a glass capsule; the chosen one gets a white ring.
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, h / 2);
+      ctx.fillStyle = SKIN_PRESETS[t.index];
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.stroke();
       if (!xrPrefs.skinAuto && xrPrefs.skinPreset === t.index) {
         ctx.beginPath();
-        ctx.arc(x + w / 2, y + h / 2, w / 2 + 10, 0, Math.PI * 2);
-        ctx.lineWidth = 7;
+        ctx.roundRect(x - 7, y - 7, w + 14, h + 14, (h + 14) / 2);
+        ctx.lineWidth = 6;
         ctx.strokeStyle = '#ffffff';
         ctx.stroke();
       }
       continue;
     }
     if (t.kind === 'fine' || t.kind === 'height') {
-      const value = t.kind === 'fine' ? xrPrefs.skinFine : (xrPrefs.skinHeightMm / HEIGHT_RANGE_MM + 1) / 2;
-      drawGlassSlider(ctx, x, y, w, h, value);
-      // Symbol and name on the left, value on the right: dark where the white fill covers them.
-      const filled = x + w * value;
-      const ink = (px: number) => (px < filled ? GLASS_TEXT_ON_SELECTED : GLASS_TEXT);
       const cy = y + h / 2;
-      drawSymbol(ctx, t.kind === 'fine' ? 'sun' : 'target', x + 52, cy, 46, ink(x + 52));
-      ctx.font = `600 40px ${GLASS_FONT}`;
+      const value = t.kind === 'fine' ? xrPrefs.skinFine : (xrPrefs.skinHeightMm / HEIGHT_RANGE_MM + 1) / 2;
+      ctx.fillStyle = GLASS_TEXT_MUTED;
+      ctx.font = `500 34px ${GLASS_FONT}`;
       ctx.textAlign = 'left';
-      ctx.fillStyle = ink(x + 90);
-      ctx.fillText(t.kind === 'fine' ? 'Skin tone' : 'Height', x + 90, cy + 2);
-      ctx.textAlign = 'right';
-      ctx.fillStyle = ink(x + w - 40);
-      ctx.fillText(
-        t.kind === 'fine'
-          ? `${Math.round((xrPrefs.skinFine - 0.5) * 100)}`
-          : `${xrPrefs.skinHeightMm > 0 ? '+' : ''}${xrPrefs.skinHeightMm} mm`,
-        x + w - 40,
-        cy + 2,
-      );
+      ctx.fillText(t.kind === 'fine' ? 'Tone' : `Height ${xrPrefs.skinHeightMm > 0 ? '+' : ''}${xrPrefs.skinHeightMm}`, 36, cy + 2);
+      ctx.textAlign = 'center';
+      ctx.font = `600 42px ${GLASS_FONT}`;
+      drawGlassSlider(ctx, x, cy, w, value);
       continue;
     }
     if (t.kind === 'auto') {
-      // On: green glass (camera colour in use) or amber glass (no camera access: the presets are used).
-      const tint = !xrPrefs.skinAuto ? undefined : xrPrefs.autoWorking ? 'rgba(48, 209, 88, 0.85)' : 'rgba(255, 159, 10, 0.85)';
-      drawGlassTile(ctx, x, y, w, h, { tint });
+      // On: green glass (camera colour in use) or amber glass (no camera access: presets are used).
+      const tint = !xrPrefs.skinAuto ? undefined : xrPrefs.autoWorking ? 'rgba(47, 158, 99, 0.75)' : 'rgba(211, 154, 44, 0.75)';
+      drawGlassButton(ctx, x, y, w, h, { tint });
       ctx.fillStyle = GLASS_TEXT;
-      ctx.font = `600 34px ${GLASS_FONT}`;
-      ctx.textAlign = 'center';
+      ctx.font = `600 36px ${GLASS_FONT}`;
       ctx.fillText('Auto', x + w / 2, y + h / 2 + 2);
+      ctx.font = `600 42px ${GLASS_FONT}`;
       continue;
     }
-    const on =
+    const selected =
       (t.kind === 'hand' && xrPrefs.hand === t.side) ||
       (t.kind === 'reattach' && reattachFlash) ||
       (t.kind === 'mesh' && xrPrefs.showHandMesh);
-    drawGlassTile(ctx, x, y, w, h, { on });
-    ctx.fillStyle = on ? GLASS_TEXT_ON_SELECTED : GLASS_TEXT;
-    ctx.font = `600 40px ${GLASS_FONT}`;
-    ctx.textAlign = 'center';
+    drawGlassButton(ctx, x, y, w, h, { selected });
+    ctx.fillStyle = selected ? GLASS_TEXT_ON_SELECTED : GLASS_TEXT;
     const label = t.kind === 'hand' ? (t.side === 'left' ? 'Left' : 'Right') : t.kind === 'mesh' ? 'Mesh' : 'Calibrate';
     ctx.fillText(label, x + w / 2, y + h / 2 + 2);
   }

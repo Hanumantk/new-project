@@ -7,7 +7,7 @@ import { GrabController } from './GrabController';
 import type { Kit } from '../mat/lib/kit';
 import { MaterialMat } from '../mat/MaterialMat';
 import type { MatSystem } from '../mat/xr/MatSystem';
-import { GLASS_FONT, GLASS_TEXT, GLASS_TEXT_ON_SELECTED, drawGlassSlider, drawGlassTile, drawSymbol } from '../lib/glassCanvas';
+import { GLASS_FONT, GLASS_TEXT, GLASS_TEXT_MUTED, drawGlassPanel, drawGlassSlider } from '../lib/glassCanvas';
 import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
 import type { HandStatus } from './Hud';
 import { XRPoseSource } from './XRPoseSource';
@@ -179,7 +179,7 @@ function drawHint(canvas: HTMLCanvasElement, text: string) {
   const ctx = canvas.getContext('2d')!;
   const { width: w, height: h } = canvas;
   ctx.clearRect(0, 0, w, h);
-  drawGlassTile(ctx, 6, 6, w - 12, h - 12);
+  drawGlassPanel(ctx, 4, 4, w - 8, h - 8, h / 2 - 4);
   ctx.fillStyle = GLASS_TEXT;
   ctx.font = `600 76px ${GLASS_FONT}`;
   ctx.textAlign = 'center';
@@ -336,21 +336,26 @@ const GRAB_TINT: Record<GrabState, THREE.Color> = {
 function drawSlider(canvas: HTMLCanvasElement, value: number) {
   const ctx = canvas.getContext('2d')!;
   const { width: w, height: h } = canvas;
-  // A Control-Center slider laid sideways: the glass pill fills with white up to the fingertip.
-  const edge = 6 + (w - 12) * value;
-  ctx.clearRect(0, 0, w, h);
-  drawGlassSlider(ctx, 6, 6, w - 12, h - 12, value);
-  const ink = (px: number) => (px < edge ? GLASS_TEXT_ON_SELECTED : GLASS_TEXT);
+  const toPx = (x: number) => (x / HEADSET_SLIDER.width + 0.5) * w;
+  const x0 = toPx(HEADSET_SLIDER.trackStart);
+  const x1 = toPx(HEADSET_SLIDER.trackEnd);
   const cy = h / 2;
+  ctx.clearRect(0, 0, w, h);
+  drawGlassPanel(ctx, 4, 4, w - 8, h - 8, h / 2 - 4);
+
+  ctx.fillStyle = GLASS_TEXT_MUTED;
+  ctx.font = `500 38px ${GLASS_FONT}`;
   ctx.textBaseline = 'middle';
-  drawSymbol(ctx, 'drop', 70, cy, 52, ink(70));
-  ctx.font = `600 44px ${GLASS_FONT}`;
   ctx.textAlign = 'left';
-  ctx.fillStyle = ink(112);
-  ctx.fillText('Wound opacity', 112, cy + 2);
+  ctx.fillText('Wound', 56, cy - 22);
+  ctx.fillText('opacity', 56, cy + 22);
+
+  drawGlassSlider(ctx, x0, cy, x1 - x0, value);
+
+  ctx.fillStyle = GLASS_TEXT;
+  ctx.font = `600 44px ${GLASS_FONT}`;
   ctx.textAlign = 'right';
-  ctx.fillStyle = ink(w - 52);
-  ctx.fillText(`${Math.round(value * 100)}%`, w - 52, cy + 2);
+  ctx.fillText(`${Math.round(value * 100)}%`, w - 48, cy + 2);
 }
 
 /** Tells the page (outside the headset) whether a hand is tracked. */
