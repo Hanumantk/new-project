@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  GLASS_FONT,
+  GLASS_TEXT,
+  GLASS_TEXT_MUTED,
+  GLASS_TEXT_ON_SELECTED,
+  drawGlassButton,
+  drawGlassPanel,
+  drawGlassSlider,
+} from '../lib/glassCanvas';
 import { SKIN_PRESETS, requestReattach, setXRPrefs, xrPrefs, type HandSide } from '../lib/xrPrefs';
 
 /** Panel size (metres) and canvas resolution. */
@@ -175,24 +184,27 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
   const k = PX / W;
   const rect = (r: Region) => [(r.x0 + W / 2) * k, (H / 2 - r.y1) * k, (r.x1 - r.x0) * k, (r.y1 - r.y0) * k] as const;
   ctx.clearRect(0, 0, PX, PY);
-  ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
-  ctx.beginPath();
-  ctx.roundRect(4, 4, PX - 8, PY - 8, 48);
-  ctx.fill();
-  ctx.font = '600 44px "DM Sans", system-ui, sans-serif';
+  drawGlassPanel(ctx, 4, 4, PX - 8, PY - 8, 64);
+  ctx.font = `600 42px ${GLASS_FONT}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const r of REGIONS) {
     const [x, y, w, h] = rect(r);
     const t = r.target;
     if (t.kind === 'skin') {
-      ctx.fillStyle = SKIN_PRESETS[t.index];
+      // Swatch: the colour as a glass capsule; the chosen one gets a white ring.
       ctx.beginPath();
-      ctx.roundRect(x, y, w, h, 18);
+      ctx.roundRect(x, y, w, h, h / 2);
+      ctx.fillStyle = SKIN_PRESETS[t.index];
       ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.stroke();
       if (!xrPrefs.skinAuto && xrPrefs.skinPreset === t.index) {
-        ctx.lineWidth = 10;
-        ctx.strokeStyle = '#2f9e63';
+        ctx.beginPath();
+        ctx.roundRect(x - 7, y - 7, w + 14, h + 14, (h + 14) / 2);
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = '#ffffff';
         ctx.stroke();
       }
       continue;
@@ -200,49 +212,31 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
     if (t.kind === 'fine' || t.kind === 'height') {
       const cy = y + h / 2;
       const value = t.kind === 'fine' ? xrPrefs.skinFine : (xrPrefs.skinHeightMm / HEIGHT_RANGE_MM + 1) / 2;
-      ctx.fillStyle = '#6b746f';
-      ctx.font = '500 36px "DM Sans", system-ui, sans-serif';
+      ctx.fillStyle = GLASS_TEXT_MUTED;
+      ctx.font = `500 34px ${GLASS_FONT}`;
       ctx.textAlign = 'left';
-      ctx.fillText(t.kind === 'fine' ? 'Tone' : `Height ${xrPrefs.skinHeightMm > 0 ? '+' : ''}${xrPrefs.skinHeightMm}`, 28, cy + 2);
+      ctx.fillText(t.kind === 'fine' ? 'Tone' : `Height ${xrPrefs.skinHeightMm > 0 ? '+' : ''}${xrPrefs.skinHeightMm}`, 36, cy + 2);
       ctx.textAlign = 'center';
-      ctx.font = '600 44px "DM Sans", system-ui, sans-serif';
-      ctx.lineCap = 'round';
-      ctx.lineWidth = 16;
-      ctx.strokeStyle = '#d6dbd8';
-      ctx.beginPath();
-      ctx.moveTo(x, cy);
-      ctx.lineTo(x + w, cy);
-      ctx.stroke();
-      ctx.fillStyle = '#ffffff';
-      ctx.strokeStyle = '#2f9e63';
-      ctx.lineWidth = 8;
-      ctx.beginPath();
-      ctx.arc(x + w * value, cy, 26, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      ctx.font = `600 42px ${GLASS_FONT}`;
+      drawGlassSlider(ctx, x, cy, w, value);
       continue;
     }
     if (t.kind === 'auto') {
-      // On: green (camera colour in use) or amber (no camera access: presets are used).
-      ctx.fillStyle = !xrPrefs.skinAuto ? '#e4e8e5' : xrPrefs.autoWorking ? '#2f9e63' : '#d39a2c';
-      ctx.beginPath();
-      ctx.roundRect(x, y, w, h, 24);
-      ctx.fill();
-      ctx.fillStyle = xrPrefs.skinAuto ? '#ffffff' : '#1f2a24';
-      ctx.font = '600 38px "DM Sans", system-ui, sans-serif';
+      // On: green glass (camera colour in use) or amber glass (no camera access: presets are used).
+      const tint = !xrPrefs.skinAuto ? undefined : xrPrefs.autoWorking ? 'rgba(47, 158, 99, 0.75)' : 'rgba(211, 154, 44, 0.75)';
+      drawGlassButton(ctx, x, y, w, h, { tint });
+      ctx.fillStyle = GLASS_TEXT;
+      ctx.font = `600 36px ${GLASS_FONT}`;
       ctx.fillText('Auto', x + w / 2, y + h / 2 + 2);
-      ctx.font = '600 44px "DM Sans", system-ui, sans-serif';
+      ctx.font = `600 42px ${GLASS_FONT}`;
       continue;
     }
     const selected =
       (t.kind === 'hand' && xrPrefs.hand === t.side) ||
       (t.kind === 'reattach' && reattachFlash) ||
       (t.kind === 'mesh' && xrPrefs.showHandMesh);
-    ctx.fillStyle = selected ? '#2f9e63' : '#e4e8e5';
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 28);
-    ctx.fill();
-    ctx.fillStyle = selected ? '#ffffff' : '#1f2a24';
+    drawGlassButton(ctx, x, y, w, h, { selected });
+    ctx.fillStyle = selected ? GLASS_TEXT_ON_SELECTED : GLASS_TEXT;
     const label = t.kind === 'hand' ? (t.side === 'left' ? 'Left' : 'Right') : t.kind === 'mesh' ? 'Mesh' : 'Calibrate';
     ctx.fillText(label, x + w / 2, y + h / 2 + 2);
   }
