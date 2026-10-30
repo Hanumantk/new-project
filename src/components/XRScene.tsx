@@ -9,8 +9,9 @@ import { MaterialMat } from '../mat/MaterialMat';
 import type { MatSystem } from '../mat/xr/MatSystem';
 import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
 import type { HandStatus } from './Hud';
-import { WoundModel } from './WoundModel';
 import { XRPoseSource } from './XRPoseSource';
+import { XRWound } from './XRWound';
+import { XRWoundPanel } from './XRWoundPanel';
 
 export type XRMode = 'ar' | 'vr';
 
@@ -63,7 +64,8 @@ export const XRScene = memo(function XRScene({
       <hemisphereLight args={['#ffffff', '#c9cfc7', 0.8]} />
       <directionalLight position={[0.6, 2.2, 0.8]} intensity={1} />
       <XRPoseSource pose={pose} showHands={isVR} />
-      <WoundModel pose={pose} occlude={!isVR} strength={woundOpacity} />
+      <XRWound strength={woundOpacity} />
+      <XRWoundPanel active={mode !== null} />
       <HintPanel pose={pose} active={mode !== null} />
       <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} grab={grab} />
       <StatusReporter pose={pose} onHandStatus={onHandStatus} />
@@ -106,10 +108,7 @@ function VRRoom({ floorY }: { floorY: number }) {
   );
 }
 
-const HINTS: Record<'none' | 'closed', string> = {
-  none: 'Hold up your open palm',
-  closed: 'Open your hand',
-};
+const HINT_NO_HAND = 'Hold up your palm';
 
 /** A small panel floating in front of the user while no open hand is tracked. */
 function HintPanel({ pose, active }: { pose: RefObject<HandPose>; active: boolean }) {
@@ -141,7 +140,8 @@ function HintPanel({ pose, active }: { pose: RefObject<HandPose>; active: boolea
     const mesh = meshRef.current;
     const hand = pose.current;
     if (!mesh || !hand) return;
-    const hint = !active ? '' : !hand.tracked ? HINTS.none : !hand.open ? HINTS.closed : '';
+    // Only while the chosen hand isn't tracked (the wound never waits for an open hand).
+    const hint = !active ? '' : !hand.tracked ? HINT_NO_HAND : '';
     mesh.visible = hint !== '';
     if (!hint) {
       scratch.placed = false;
@@ -394,7 +394,7 @@ function StatusReporter({
   useFrame(() => {
     const hand = pose.current;
     if (!hand) return;
-    const status: HandStatus = !hand.tracked ? 'none' : hand.open ? 'open' : 'closed';
+    const status: HandStatus = hand.tracked ? 'open' : 'none';
     if (status !== last.current) {
       last.current = status;
       onHandStatus(status);
