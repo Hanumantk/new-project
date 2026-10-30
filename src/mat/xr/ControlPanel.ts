@@ -58,6 +58,23 @@ function roundedRect(width: number, height: number, radius: number) {
   return new THREE.ShapeGeometry(shape, 6);
 }
 
+/** A rounded-rectangle ring (outer size, corner radius, ring width): the glass panel's bright rim. */
+function roundedRing(width: number, height: number, radius: number, thickness: number) {
+  const outer = roundedRect(width, height, radius);
+  const inner = roundedRect(width - 2 * thickness, height - 2 * thickness, radius - thickness);
+  const shape = new THREE.Shape(outerPoints(outer));
+  shape.holes.push(new THREE.Path(outerPoints(inner).reverse()));
+  outer.dispose();
+  inner.dispose();
+  return new THREE.ShapeGeometry(shape, 6);
+}
+
+/** The outline points of a ShapeGeometry made by roundedRect. */
+function outerPoints(geometry: THREE.ShapeGeometry) {
+  const shape = (geometry.parameters.shapes as THREE.Shape);
+  return shape.getPoints(6);
+}
+
 const material = (color: string, opacity: number) =>
   new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, toneMapped: false });
 
@@ -75,15 +92,17 @@ interface ButtonView {
 
 const local = new THREE.Vector3();
 const inverse = new THREE.Matrix4();
-const MINT = new THREE.Color(COLORS.mint);
 const WARN = new THREE.Color(COLORS.warn);
 const WHITE = new THREE.Color('#ffffff');
 const INK_TEXT = hex(COLORS.ink);
-/** Backing colour and opacity: normal, with a hand on it, and while it's carried. */
+/**
+ * Backing (Apple-style spatial glass: smoky and translucent, with a bright
+ * rim): normal, with a hand on it, and while it's carried.
+ */
 const BACKING = {
-  none: { color: new THREE.Color(COLORS.ink), opacity: 0.5 },
-  hover: { color: new THREE.Color('#1f3a2e'), opacity: 0.62 },
-  held: { color: new THREE.Color('#2b5240'), opacity: 0.72 },
+  none: { color: new THREE.Color('#3b4340'), opacity: 0.58 },
+  hover: { color: new THREE.Color('#47524d'), opacity: 0.66 },
+  held: { color: new THREE.Color('#53615a'), opacity: 0.74 },
 };
 const LABEL_TEXT = hex(COLORS.label);
 
@@ -106,9 +125,13 @@ export class ControlPanel {
 
   constructor(private readonly actions: PanelActions) {
     this.group.rotation.order = 'YXZ';
-    const backing = new THREE.Mesh(roundedRect(WIDTH, HEIGHT, 0.014), material(COLORS.ink, 0.5));
+    const backing = new THREE.Mesh(roundedRect(WIDTH, HEIGHT, 0.024), material('#3b4340', 0.58));
     backing.renderOrder = 40;
     this.backing = backing;
+    const rim = new THREE.Mesh(roundedRing(WIDTH, HEIGHT, 0.024, 0.0012), material('#ffffff', 0.45));
+    rim.position.z = 0.0005;
+    rim.renderOrder = 41;
+    backing.add(rim);
 
     this.status = makeText('', { size: 0.0105, color: COLORS.muted, anchorY: 'middle', maxWidth: WIDTH - 0.03, halo: false });
     this.status.position.set(-WIDTH / 2 + 0.014, HEIGHT / 2 - 0.016, 0.001);
@@ -118,7 +141,7 @@ export class ControlPanel {
     const trackLength = SLIDER.trackEnd - SLIDER.trackStart;
     const track = new THREE.Mesh(roundedRect(trackLength, 0.006, 0.003), material('#ffffff', 0.22));
     track.position.set((SLIDER.trackStart + SLIDER.trackEnd) / 2, SLIDER_Y, 0.001);
-    this.fill = new THREE.Mesh(roundedRect(1, 0.006, 0.003), material(COLORS.mint, 1));
+    this.fill = new THREE.Mesh(roundedRect(1, 0.006, 0.003), material('#ffffff', 0.92));
     this.knob = new THREE.Mesh(new THREE.CircleGeometry(0.011, 32), material(COLORS.label, 1));
     this.valueText = makeText('', { size: 0.0105, weight: 'bold', anchorX: 'right', anchorY: 'middle', halo: false });
     this.valueText.position.set(WIDTH / 2 - 0.014, SLIDER_Y, 0.001);
@@ -127,7 +150,7 @@ export class ControlPanel {
     for (const mesh of [track, this.fill, this.knob]) mesh.renderOrder = 41;
 
     const ids: PanelButton[] = ['prev', 'step', 'next', 'redraw'];
-    const faceGeometry = roundedRect(BUTTON.width, BUTTON.height, 0.008);
+    const faceGeometry = roundedRect(BUTTON.width, BUTTON.height, BUTTON.height / 2);
     const firstX = -((ids.length - 1) * (BUTTON.width + BUTTON.gap)) / 2;
     this.buttons = ids.map((id, i) => {
       const x = firstX + i * (BUTTON.width + BUTTON.gap);
@@ -269,15 +292,16 @@ export class ControlPanel {
   private paintButton(b: ButtonView) {
     const warn = b.id === 'redraw' && this.confirmRedraw > 0;
     const filled = b.toggled || b.poke.state === 'pressed' || warn;
+    // Glass capsules: clear normally, brighter under a fingertip, solid white when on.
     if (filled) {
-      b.material.color.copy(warn ? WARN : MINT);
-      b.material.opacity = b.poke.state === 'pressed' ? 1 : 0.85;
+      b.material.color.copy(warn ? WARN : WHITE);
+      b.material.opacity = b.poke.state === 'pressed' ? 1 : 0.92;
     } else if (b.poke.state === 'hover') {
-      b.material.color.copy(MINT);
+      b.material.color.copy(WHITE);
       b.material.opacity = 0.3;
     } else {
       b.material.color.copy(WHITE);
-      b.material.opacity = 0.12;
+      b.material.opacity = 0.16;
     }
     if (filled !== b.dark) {
       b.dark = filled;

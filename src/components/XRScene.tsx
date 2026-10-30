@@ -7,6 +7,7 @@ import { GrabController } from './GrabController';
 import type { Kit } from '../mat/lib/kit';
 import { MaterialMat } from '../mat/MaterialMat';
 import type { MatSystem } from '../mat/xr/MatSystem';
+import { GLASS_FONT, GLASS_TEXT, GLASS_TEXT_MUTED, drawGlassPanel, drawGlassSlider } from '../lib/glassCanvas';
 import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
 import type { HandStatus } from './Hud';
 import { XRPoseSource } from './XRPoseSource';
@@ -60,7 +61,7 @@ export const XRScene = memo(function XRScene({
         rendererRef.current = gl;
       }}
     >
-      {isVR && <VRRoom floorY={floorY} />}
+      {mode === 'vr' && <VRRoom floorY={floorY} />}
       <hemisphereLight args={['#ffffff', '#c9cfc7', 0.8]} />
       <directionalLight position={[0.6, 2.2, 0.8]} intensity={1} />
       <XRPoseSource pose={pose} showHands={isVR} />
@@ -178,12 +179,9 @@ function drawHint(canvas: HTMLCanvasElement, text: string) {
   const ctx = canvas.getContext('2d')!;
   const { width: w, height: h } = canvas;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
-  ctx.beginPath();
-  ctx.roundRect(4, 4, w - 8, h - 8, h / 2 - 4);
-  ctx.fill();
-  ctx.fillStyle = '#1f2a24';
-  ctx.font = '600 76px "DM Sans", system-ui, sans-serif';
+  drawGlassPanel(ctx, 4, 4, w - 8, h - 8, h / 2 - 4);
+  ctx.fillStyle = GLASS_TEXT;
+  ctx.font = `600 76px ${GLASS_FONT}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, w / 2, h / 2 + 4);
@@ -343,43 +341,21 @@ function drawSlider(canvas: HTMLCanvasElement, value: number) {
   const x1 = toPx(HEADSET_SLIDER.trackEnd);
   const cy = h / 2;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
-  ctx.beginPath();
-  ctx.roundRect(4, 4, w - 8, h - 8, 48);
-  ctx.fill();
+  drawGlassPanel(ctx, 4, 4, w - 8, h - 8, h / 2 - 4);
 
-  ctx.fillStyle = '#6b746f';
-  ctx.font = '500 40px "DM Sans", system-ui, sans-serif';
+  ctx.fillStyle = GLASS_TEXT_MUTED;
+  ctx.font = `500 38px ${GLASS_FONT}`;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  ctx.fillText('Wound', 44, cy - 24);
-  ctx.fillText('opacity', 44, cy + 24);
+  ctx.fillText('Wound', 56, cy - 22);
+  ctx.fillText('opacity', 56, cy + 22);
 
-  ctx.lineCap = 'round';
-  ctx.lineWidth = 16;
-  ctx.strokeStyle = '#d6dbd8';
-  ctx.beginPath();
-  ctx.moveTo(x0, cy);
-  ctx.lineTo(x1, cy);
-  ctx.stroke();
-  const knob = x0 + (x1 - x0) * value;
-  ctx.strokeStyle = '#2f9e63';
-  ctx.beginPath();
-  ctx.moveTo(x0, cy);
-  ctx.lineTo(Math.max(knob, x0 + 0.1), cy);
-  ctx.stroke();
-  ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = '#2f9e63';
-  ctx.lineWidth = 8;
-  ctx.beginPath();
-  ctx.arc(knob, cy, 30, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  drawGlassSlider(ctx, x0, cy, x1 - x0, value);
 
-  ctx.fillStyle = '#1f2a24';
-  ctx.font = '600 46px "DM Sans", system-ui, sans-serif';
+  ctx.fillStyle = GLASS_TEXT;
+  ctx.font = `600 44px ${GLASS_FONT}`;
   ctx.textAlign = 'right';
-  ctx.fillText(`${Math.round(value * 100)}%`, w - 40, cy + 2);
+  ctx.fillText(`${Math.round(value * 100)}%`, w - 48, cy + 2);
 }
 
 /** Tells the page (outside the headset) whether a hand is tracked. */
