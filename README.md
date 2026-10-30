@@ -94,16 +94,23 @@ both remember the last value, as the webcam view's does.
 
 A detailed rigged hand model (`public/models/Hand.glb`, "Do_Hand" ©
 2026 Emma L. D. Lieker, from Sketchfab: CC BY-NC, so non-commercial use
-with credit) is posed on the headset's hand joints every frame and sized to
-your hand: each bone stretches to that segment of your hand, and its width
-and thickness follow your knuckle span. It's mirrored for a right hand.
+with credit) is posed on the headset's hand joints every frame. It's sized
+to your hand over about half a second when the hand first appears (and on
+**Calibrate**):
+- Each bone stretches to that segment of your hand.
+- Its thickness comes from the headset's own measurement of each joint's
+  radius (centre to skin) for your hand.
+- The palm's width follows your knuckle span.
+It's mirrored for a right hand.
 The wound scales with your palm too: `LENGTH_CM` is its length on an
 average hand (`REFERENCE_PALM_CM` from wrist to middle knuckle).
-- The wound is laid onto that model's curved palm skin and skinned with the
-  model's own weights, so it stays fixed to the skin as the hand moves,
-  turns and bends.
+- The wound is laid onto that model's palm skin, smoothed over about 1 cm
+  so it follows the palm's curve but not every bump of the model. It's
+  skinned with the model's own weights, so it stays fixed to the skin as
+  the hand moves, turns and bends.
 - An invisible copy of the hand hides the wound behind your real fingers
-  and the back of your hand.
+  and the back of your hand. It's pushed 6 mm back along each line of
+  sight, so the skin under the wound never clips it.
 - There's no smoothing (the runtime already predicts poses) and no fade
   while the hand is tracked.
 - The skin tone comes from the camera when allowed (Auto), otherwise from
@@ -111,7 +118,7 @@ average hand (`REFERENCE_PALM_CM` from wrist to middle knuckle).
 
 ### Headset wound: settings and testing
 
-- **Panel:** the in-headset panel (below and right of straight ahead) picks the hand (Left or Right; only that hand is ever used), **Re-attach** (lays the wound onto your palm afresh, as it is now), **Mesh** (shows the tracked hand model as a wireframe over your real hand, to check how it lines up), and the skin tone. **Auto** (on by default) reads your palm's real colour from the headset camera when the browser grants WebXR camera access: green means it's working, amber means no camera access, so the presets are used. Picking a swatch or moving the fine slider switches to manual. Press with an index fingertip; settings are saved.
+- **Panel:** the in-headset panel (below and right of straight ahead) picks the hand (Left or Right; only that hand is ever used), **Calibrate** (hold your palm flat: it measures your hand for about 0.5 s and lays the wound on afresh; use it for each new user), **Mesh** (shows the tracked hand model as a wireframe over your real hand, to check how it lines up), the skin tone, and **Height** (raises or sinks the wound on your skin, ±5 mm, saved). **Auto** (on by default) reads your palm's real colour from the headset camera when the browser grants WebXR camera access: green means it's working, amber means no camera access, so the presets are used. Picking a swatch or moving the fine slider switches to manual. Press with an index fingertip; settings are saved.
 - **Tunable constants** (`src/components/XRWound.tsx`): `LENGTH_CM`, `REFERENCE_PALM_CM`, `ANGLE_DEG`, `OFFSET_MM`, `PALM_OFFSET_MM`, `USE_SKINNING`. The look is `XR_WOUND_LOOK` in `src/lib/xrWoundMaterial.ts`.
 - **Emulator:** in Chrome with Meta's Immersive Web Emulator, choose Quest 3, switch input to hand tracking, then **Start mixed reality → Enter mixed reality**. Pose the left hand with its palm facing you; the wound appears on it, and the panel switches hands.
 - **Headset:** open the site in the Quest browser, allow hand tracking, put the controllers down and hold up the chosen palm. Check that the wound stays glued as you move and turn it fast, bends when you cup the palm, and is hidden by curled fingers and when the back of the hand faces you.

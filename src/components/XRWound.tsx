@@ -21,7 +21,7 @@ export const LENGTH_CM = 8.5;
 export const REFERENCE_PALM_CM = 9.5;
 /** …turned this far from the palm's long axis towards the thumb (degrees)… */
 export const ANGLE_DEG = 35;
-/** …this far above the skin (mm)… */
+/** …this far above the skin (mm; the panel's Height slider adds ±5)… */
 export const OFFSET_MM = 0.5;
 /** …and moved on the palm (mm): [towards the thumb, towards the fingers], from the metacarpals' centre (their joints sit at the base of the palm). */
 export const PALM_OFFSET_MM: readonly [number, number] = [0, 20];
@@ -279,6 +279,9 @@ export function XRWound({ strength }: XRWoundProps) {
       frame: { point: new THREE.Vector3(), quaternion: new THREE.Quaternion() } as PalmFrame,
       placed: false,
       bound: false,
+      pendingBind: false,
+      boundHeight: 0,
+      sinceBind: 0,
       lostFor: Infinity,
       boundHand: null as HandSide | null,
       boundReattach: -1,
@@ -312,11 +315,23 @@ export function XRWound({ strength }: XRWoundProps) {
     const tracked = !!hand?.joints.wrist?.visible && state.reader.read(hand, state.frame) && model.update(hand);
     if (tracked) {
       if (USE_SKINNING) {
-        // Lay the wound on the model's palm on the first frame, on Re-attach, and when the hand changes.
-        if (!state.bound || state.boundHand !== xrPrefs.hand || state.boundReattach !== xrPrefs.reattach) {
-          state.bound = bind(mesh as unknown as THREE.SkinnedMesh, model);
+        // Measure the hand (~0.5 s) and then lay the wound on its palm: on the
+        // first frame, on Calibrate, and when the hand changes.
+        if (state.boundHand !== xrPrefs.hand || state.boundReattach !== xrPrefs.reattach) {
           state.boundHand = xrPrefs.hand;
           state.boundReattach = xrPrefs.reattach;
+          model.startCalibration();
+          state.pendingBind = true;
+        }
+        state.sinceBind += delta;
+        const heightChanged = state.bound && state.boundHeight !== xrPrefs.skinHeightMm && state.sinceBind > 0.15;
+        if ((state.pendingBind && model.calibrated) || heightChanged) {
+          const bound = bind(mesh as unknown as THREE.SkinnedMesh, model);
+          state.bound = bound || state.bound;
+          state.pendingBind = !bound && state.pendingBind;
+          state.boundHeight = xrPrefs.skinHeightMm;
+          state.sinceBind = 0;
+          model.setOccluderPushExtra(-xrPrefs.skinHeightMm / 1000);
         }
       } else {
         mesh.position.copy(state.frame.point);
@@ -384,7 +399,7 @@ export function XRWound({ strength }: XRWoundProps) {
         skinWeight: handGeometry.getAttribute('skinWeight') as THREE.BufferAttribute,
       },
       state.toWound,
-      OFFSET_MM / 1000 / handScale,
+      (OFFSET_MM + xrPrefs.skinHeightMm) / 1000 / handScale,
       g,
     );
     if (!ok) return false;

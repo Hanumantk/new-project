@@ -5,9 +5,11 @@ import { SKIN_PRESETS, requestReattach, setXRPrefs, xrPrefs, type HandSide } fro
 
 /** Panel size (metres) and canvas resolution. */
 const W = 0.24;
-const H = 0.1;
+const H = 0.13;
 const PX = 1200;
-const PY = 500;
+const PY = 650;
+/** The skin-height slider's range (± mm). */
+const HEIGHT_RANGE_MM = 5;
 /** A fingertip counts as pressing within this distance of the face (m)… */
 const TOUCH = 0.015;
 /** …and must pull back this far before it can press again. */
@@ -19,7 +21,8 @@ type Target =
   | { kind: 'mesh' }
   | { kind: 'skin'; index: number }
   | { kind: 'auto' }
-  | { kind: 'fine' };
+  | { kind: 'fine' }
+  | { kind: 'height' };
 
 interface Region {
   target: Target;
@@ -32,25 +35,28 @@ interface Region {
 
 // Layout (metres): row 1 hand + re-attach, row 2 skin swatches, row 3 fine tone.
 const REGIONS: Region[] = [
-  { target: { kind: 'hand', side: 'left' }, x0: -0.11, x1: -0.065, y0: 0.017, y1: 0.045 },
-  { target: { kind: 'hand', side: 'right' }, x0: -0.06, x1: -0.015, y0: 0.017, y1: 0.045 },
-  { target: { kind: 'reattach' }, x0: -0.005, x1: 0.058, y0: 0.017, y1: 0.045 },
-  { target: { kind: 'mesh' }, x0: 0.063, x1: 0.11, y0: 0.017, y1: 0.045 },
+  { target: { kind: 'hand', side: 'left' }, x0: -0.11, x1: -0.065, y0: 0.032, y1: 0.06 },
+  { target: { kind: 'hand', side: 'right' }, x0: -0.06, x1: -0.015, y0: 0.032, y1: 0.06 },
+  { target: { kind: 'reattach' }, x0: -0.005, x1: 0.058, y0: 0.032, y1: 0.06 },
+  { target: { kind: 'mesh' }, x0: 0.063, x1: 0.11, y0: 0.032, y1: 0.06 },
   ...SKIN_PRESETS.map((_, index) => ({
     target: { kind: 'skin', index } as Target,
     x0: -0.11 + index * 0.031,
     x1: -0.11 + index * 0.031 + 0.026,
-    y0: -0.016,
-    y1: 0.011,
+    y0: -0.001,
+    y1: 0.026,
   })),
-  { target: { kind: 'auto' }, x0: 0.076, x1: 0.11, y0: -0.016, y1: 0.011 },
-  { target: { kind: 'fine' }, x0: -0.09, x1: 0.09, y0: -0.045, y1: -0.024 },
+  { target: { kind: 'auto' }, x0: 0.076, x1: 0.11, y0: -0.001, y1: 0.026 },
+  { target: { kind: 'fine' }, x0: -0.07, x1: 0.1, y0: -0.031, y1: -0.011 },
+  { target: { kind: 'height' }, x0: -0.07, x1: 0.1, y0: -0.059, y1: -0.039 },
 ];
 
 /**
  * In-headset settings for the wound: which hand (only that one is ever
- * used), Re-attach (place the wound on the palm afresh), and the skin tone
- * (six presets plus a fine adjustment). Press with an index fingertip.
+ * used), Calibrate (measure the hand and lay the wound on its palm afresh),
+ * Mesh (show the hand model), the skin tone (Auto from the camera, six
+ * presets, a fine adjustment) and the wound's height on the skin. Press with
+ * an index fingertip.
  */
 export function XRWoundPanel({ active }: { active: boolean }) {
   const gl = useThree((s) => s.gl);
@@ -124,10 +130,16 @@ export function XRWoundPanel({ active }: { active: boolean }) {
       for (const r of REGIONS) if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) region = r;
       if (!region) continue;
       const t = region.target;
-      if (t.kind === 'fine') {
+      if (t.kind === 'fine' || t.kind === 'height') {
         // A slider: follows the fingertip while it's on it.
         const value = THREE.MathUtils.clamp((x - region.x0) / (region.x1 - region.x0), 0, 1);
-        if (Math.abs(value - xrPrefs.skinFine) > 0.01 || xrPrefs.skinAuto) setXRPrefs({ skinFine: value, skinAuto: false });
+        if (t.kind === 'fine') {
+          if (Math.abs(value - xrPrefs.skinFine) > 0.01 || xrPrefs.skinAuto) setXRPrefs({ skinFine: value, skinAuto: false });
+        } else {
+          // Skin height in 0.5 mm steps.
+          const mm = Math.round((value * 2 - 1) * HEIGHT_RANGE_MM * 2) / 2;
+          if (mm !== xrPrefs.skinHeightMm) setXRPrefs({ skinHeightMm: mm });
+        }
         continue;
       }
       if (!s.armed[i]) continue;
@@ -185,8 +197,15 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
       }
       continue;
     }
-    if (t.kind === 'fine') {
+    if (t.kind === 'fine' || t.kind === 'height') {
       const cy = y + h / 2;
+      const value = t.kind === 'fine' ? xrPrefs.skinFine : (xrPrefs.skinHeightMm / HEIGHT_RANGE_MM + 1) / 2;
+      ctx.fillStyle = '#6b746f';
+      ctx.font = '500 36px "DM Sans", system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(t.kind === 'fine' ? 'Tone' : `Height ${xrPrefs.skinHeightMm > 0 ? '+' : ''}${xrPrefs.skinHeightMm}`, 28, cy + 2);
+      ctx.textAlign = 'center';
+      ctx.font = '600 44px "DM Sans", system-ui, sans-serif';
       ctx.lineCap = 'round';
       ctx.lineWidth = 16;
       ctx.strokeStyle = '#d6dbd8';
@@ -198,7 +217,7 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
       ctx.strokeStyle = '#2f9e63';
       ctx.lineWidth = 8;
       ctx.beginPath();
-      ctx.arc(x + w * xrPrefs.skinFine, cy, 26, 0, Math.PI * 2);
+      ctx.arc(x + w * value, cy, 26, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       continue;
@@ -224,7 +243,7 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
     ctx.roundRect(x, y, w, h, 28);
     ctx.fill();
     ctx.fillStyle = selected ? '#ffffff' : '#1f2a24';
-    const label = t.kind === 'hand' ? (t.side === 'left' ? 'Left' : 'Right') : t.kind === 'mesh' ? 'Mesh' : 'Re-attach';
+    const label = t.kind === 'hand' ? (t.side === 'left' ? 'Left' : 'Right') : t.kind === 'mesh' ? 'Mesh' : 'Calibrate';
     ctx.fillText(label, x + w / 2, y + h / 2 + 2);
   }
 }

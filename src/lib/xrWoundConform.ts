@@ -6,13 +6,16 @@ import * as THREE from 'three';
  *
  * Working in the wound's frame (x across, y out of the palm, z along), the
  * hand's palm-facing triangles are rasterised into a height map over the
- * wound's footprint (the outermost surface wins). Each wound vertex is then
+ * wound's footprint (the outermost surface wins), then smoothed. Each wound vertex is then
  * moved onto that surface along its normal, its normal tilted to match, and
  * its skin weights taken from the hand triangle under it.
  */
 
 /** Height-map cell size (m). */
 const CELL = 0.0015;
+/** Smoothing of the palm surface: box blur radius (cells) and passes (~1 cm wide in all). */
+const SMOOTH_RADIUS = 2;
+const SMOOTH_PASSES = 3;
 const MAX_BONES = 64;
 
 export interface ConformSource {
@@ -123,6 +126,27 @@ export function conformWound(
           break;
         }
       }
+    }
+  }
+
+  // Smooth the surface (about 1 cm): the wound follows the palm's curve, not
+  // every bump of the model (its thumb mound, creases), so it stays whole.
+  const tmp = new Float32Array(height.length);
+  for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
+    for (const [sx, sz] of [[1, 0], [0, 1]]) {
+      for (let iz = 0; iz < nz; iz++) {
+        for (let ix = 0; ix < nx; ix++) {
+          let sum = 0, n2 = 0;
+          for (let r = -SMOOTH_RADIUS; r <= SMOOTH_RADIUS; r++) {
+            const jx = ix + r * sx, jz = iz + r * sz;
+            if (jx < 0 || jz < 0 || jx >= nx || jz >= nz) continue;
+            sum += height[jz * nx + jx];
+            n2++;
+          }
+          tmp[iz * nx + ix] = sum / n2;
+        }
+      }
+      height.set(tmp);
     }
   }
 
