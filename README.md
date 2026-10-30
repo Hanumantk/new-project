@@ -92,9 +92,15 @@ you look when the session starts; press and slide along it with an index
 fingertip. The headset page has the same slider (live over Quest Link), and
 both remember the last value, as the webcam view's does.
 
-A detailed rigged hand model (`public/models/Hand.glb`, "Do_Hand" ©
-2026 Emma L. D. Lieker, from Sketchfab: CC BY-NC, so non-commercial use
-with credit) is posed on the headset's hand joints every frame. It's sized
+A detailed sculpted hand model (`public/models/Hand.glb`) is posed on the
+headset's hand joints every frame. It was converted from the project
+owner's `Hands_ armature.blend`:
+- the left hand only (it's mirrored for the right);
+- its sculpt detail at Multires level 2, about 17,500 vertices;
+- its 22 deform bones renamed to wrist, metacarpals, phalanges and thumb
+  (see `src/lib/xrHandModel.ts`).
+
+To regenerate it, run `scripts/hand-model/export_hand.py`. It's sized
 to your hand over about half a second when the hand first appears (and on
 **Calibrate**):
 - Each bone stretches to that segment of your hand.

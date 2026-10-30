@@ -1,15 +1,17 @@
 import * as THREE from 'three';
 
 /**
- * A detailed hand model ("Do_Hand", public/models/Hand.glb, a left hand)
+ * A detailed hand model (public/models/Hand.glb: a sculpted left hand whose
+ * bones are named as in BONES below)
  * driven by the headset's hand joints: every bone is put on the matching
  * joint, aimed at the next one and turned with the palm, and sized to the
  * user's hand: each bone's length to that segment of their hand, its width
  * and thickness to their knuckle span. Its palm is then a real curved surface the wound
  * can be fixed to, and the hand itself hides the wound behind it.
  *
- * Model space (from the file): fingers along +Y, palm facing −X, thumb on −Z,
- * centimetres. It's baked to metres at load, and mirrored for a right hand.
+ * At load it's baked to metres (a 9.5 cm palm, wrist → middle knuckle; it's
+ * resized to the user's hand afterwards), its palm side worked out from its
+ * bones, and it's mirrored for a right hand.
  */
 
 type Joint = XRHandJoint;
@@ -32,6 +34,7 @@ const FINGERS = [
 
 /** How each of the model's bones follows the XR joints. */
 const BONES: Record<string, BoneSpec> = {
+  forearm: { head: 'rigid' },
   radius_ulna: { head: 'wrist', aim: 'middle-finger-phalanx-proximal', roll: 'palm' },
   thumb_trapez: { head: 'rigid' },
   thumb_meta: { head: 'thumb-metacarpal', aim: 'thumb-phalanx-proximal', roll: 'palm' },
@@ -39,8 +42,7 @@ const BONES: Record<string, BoneSpec> = {
   thumb_dist: { head: 'thumb-phalanx-distal', aim: 'thumb-tip', roll: 'palm' },
 };
 for (const [m, x] of FINGERS) {
-  // The model's metacarpals all start at one point by the wrist: keep that, aim them at the knuckles.
-  BONES[`${m}_meta`] = { head: 'rigid', aim: `${x}-phalanx-proximal` as Joint, roll: `${x}-metacarpal` as Joint };
+  BONES[`${m}_meta`] = { head: `${x}-metacarpal` as Joint, aim: `${x}-phalanx-proximal` as Joint, roll: `${x}-metacarpal` as Joint };
   BONES[`${m}_prox`] = { head: `${x}-phalanx-proximal` as Joint, aim: `${x}-phalanx-intermediate` as Joint, roll: `${x}-phalanx-proximal` as Joint };
   BONES[`${m}_midd`] = { head: `${x}-phalanx-intermediate` as Joint, aim: `${x}-phalanx-distal` as Joint, roll: `${x}-phalanx-intermediate` as Joint };
   BONES[`${m}_dist`] = { head: `${x}-phalanx-distal` as Joint, aim: `${x}-tip` as Joint, roll: `${x}-phalanx-distal` as Joint };
@@ -66,8 +68,9 @@ export interface HandModelData {
   /** Rest width across the knuckles (index → pinky, metres). */
   restWidth: number;
   /**
-   * Rest thickness of each bone's part of the hand (m): for the palm, its
-   * half-thickness; for a finger or thumb segment, its radius (0: as its parent).
+   * Rest thickness of each bone's part of the hand (m): for the palm, how far
+   * its palm-side skin is from the bone; for a finger or thumb segment, its
+   * radius (0: as its parent).
    */
   restRadius: number[];
   /** Palm bones (wrist, metacarpals, trapezium): width from the knuckle span, not their radius. */
@@ -97,7 +100,11 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
   source.updateMatrixWorld(true);
   source.skeleton.bones.forEach((b) => b.updateMatrixWorld(true));
   const sx = mirror ? -1 : 1;
-  const cm = 0.01;
+  // To metres, for a 9.5 cm palm (wrist bone → middle knuckle).
+  const bones = source.skeleton.bones;
+  const names = bones.map((b) => b.name);
+  const rawHead = (name: string) => bones[names.indexOf(name)].getWorldPosition(new THREE.Vector3());
+  const cm = 0.095 / rawHead('midd_prox').distanceTo(rawHead('radius_ulna'));
   const src = source.geometry;
   const count = src.getAttribute('position').count;
   const pos = new Float32Array(count * 3);
@@ -117,8 +124,6 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
   geometry.setIndex(index);
   geometry.computeVertexNormals();
 
-  const bones = source.skeleton.bones;
-  const names = bones.map((b) => b.name);
   const head = (name: string) => {
     const p = bones[names.indexOf(name)].getWorldPosition(new THREE.Vector3()).multiplyScalar(cm);
     p.x *= sx;
@@ -128,8 +133,11 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
     const e = bones[names.indexOf(name)].matrixWorld.elements;
     return new THREE.Vector3(e[4] * sx, e[5], e[6]).normalize();
   };
-  // The palm faces −X in the model (+X once mirrored).
-  const palm = new THREE.Vector3(-sx, 0, 0);
+  // The palm side (a left hand): fingers × thumb side.
+  const fingers = head('midd_prox').sub(head('radius_ulna')).normalize();
+  const thumbSide = head('thumb_meta').sub(head('radius_ulna'));
+  thumbSide.addScaledVector(fingers, -thumbSide.dot(fingers)).normalize();
+  const palm = new THREE.Vector3().crossVectors(fingers, thumbSide).multiplyScalar(sx).normalize();
   const specs = names.map((n) => {
     const spec = BONES[n];
     if (!spec) throw new Error(`Hand model: no mapping for bone ${n}`);
@@ -162,7 +170,9 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
   const restWidth = head('index_prox').distanceTo(head('pinky_prox'));
 
   // Each bone's thickness at rest, from the vertices it moves most.
-  const isPalm = names.map((n) => n === 'radius_ulna' || n === 'thumb_trapez' || (n.endsWith('_meta') && n !== 'thumb_meta'));
+  const isPalm = names.map(
+    (n) => n === 'radius_ulna' || n === 'forearm' || n === 'thumb_trapez' || (n.endsWith('_meta') && n !== 'thumb_meta'),
+  );
   const sum = new Float64Array(names.length);
   const cnt = new Float64Array(names.length);
   const skinIndex = geometry.getAttribute('skinIndex');
@@ -179,8 +189,15 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
       }
     }
     v.fromArray(pos, i * 3).sub(restHead[best]).applyQuaternion(inv.copy(restFrame[best]).invert());
-    // Local axes: x along the bone, y towards the palm side, z across.
-    sum[best] += isPalm[best] ? Math.abs(v.y) : Math.hypot(v.y, v.z);
+    // Local axes: x along the bone, y towards the palm side, z across. For the
+    // palm, how far its palm-side skin sits from the bone (that's where the
+    // wound lies); for a finger, its radius.
+    if (isPalm[best]) {
+      if (v.y <= 0) continue;
+      sum[best] += v.y;
+    } else {
+      sum[best] += Math.hypot(v.y, v.z);
+    }
     cnt[best]++;
   }
   const restRadius = names.map((_, i) => (cnt[i] > 20 ? sum[i] / cnt[i] : 0));
@@ -216,7 +233,7 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
  * cover it, while fingers in front of the palm and the back of the hand
  * (centimetres in front) still do.
  */
-const OCCLUDER_PUSH = 0.006;
+const OCCLUDER_PUSH = 0.004;
 /** Frames averaged when calibrating to a hand (~0.5 s). */
 const CALIBRATION_FRAMES = 36;
 
@@ -287,7 +304,7 @@ export class XRHandModel {
     this.occluder = new THREE.SkinnedMesh(data.geometry, occluderMaterial);
     this.wire = new THREE.SkinnedMesh(
       data.geometry,
-      new THREE.MeshBasicMaterial({ color: '#7cf0b0', wireframe: true, transparent: true, opacity: 0.55, depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: '#7cf0b0', wireframe: true, transparent: true, opacity: 0.25, depthTest: false }),
     );
     for (const mesh of [this.occluder, this.wire]) {
       mesh.bind(skeleton, new THREE.Matrix4());

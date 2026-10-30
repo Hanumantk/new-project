@@ -146,6 +146,29 @@ export const USE_SKINNING = true;
 
 const HAND_URL = `${import.meta.env.BASE_URL}models/Hand.glb`;
 
+const FINGERTIPS = [
+  ['index-finger-phalanx-proximal', 'index-finger-tip'],
+  ['middle-finger-phalanx-proximal', 'middle-finger-tip'],
+  ['ring-finger-phalanx-proximal', 'ring-finger-tip'],
+  ['pinky-finger-phalanx-proximal', 'pinky-finger-tip'],
+] as const;
+/** A hand counts as open when its fingertips are this far from the wrist, relative to its knuckles (flat ≈ 2, fist ≈ 1). */
+const OPEN_RATIO = 1.6;
+
+/** Whether the hand is open enough to lay the wound on its palm. */
+function isHandOpen(hand: THREE.XRHandSpace): boolean {
+  const wrist = hand.joints.wrist;
+  if (!wrist) return false;
+  let sum = 0;
+  for (const [knuckleName, tipName] of FINGERTIPS) {
+    const knuckle = hand.joints[knuckleName];
+    const tip = hand.joints[tipName];
+    if (!knuckle || !tip) return false;
+    sum += wrist.position.distanceTo(tip.position) / Math.max(wrist.position.distanceTo(knuckle.position), 1e-6);
+  }
+  return sum / FINGERTIPS.length > OPEN_RATIO;
+}
+
 /** Adds (empty) skin index/weight attributes, filled at each bind. */
 function addSkinAttributes(geometry: THREE.BufferGeometry) {
   const n = geometry.getAttribute('position').count;
@@ -324,8 +347,10 @@ export function XRWound({ strength }: XRWoundProps) {
           state.pendingBind = true;
         }
         state.sinceBind += delta;
+        // Only onto an open palm: with the fingers curled over it, the wound would land on them.
+        const open = isHandOpen(hand);
         const heightChanged = state.bound && state.boundHeight !== xrPrefs.skinHeightMm && state.sinceBind > 0.15;
-        if ((state.pendingBind && model.calibrated) || heightChanged) {
+        if (open && ((state.pendingBind && model.calibrated) || heightChanged)) {
           const bound = bind(mesh as unknown as THREE.SkinnedMesh, model);
           state.bound = bound || state.bound;
           state.pendingBind = !bound && state.pendingBind;
