@@ -14,6 +14,7 @@ import {
   type WoundPlacement,
 } from './palmModel';
 import { PalmPoseFilter, type PalmMeasurement } from './poseFilter';
+import { refinePalmPose } from './palmPnP';
 import { fitRotation } from './rigidFit';
 
 /** Vertical field of view of a typical 16:9 laptop webcam (~65° horizontal). */
@@ -105,7 +106,6 @@ export class JitterMeter {
   }
 }
 
-const tmpQ = new THREE.Quaternion();
 const tmpV = new THREE.Vector3();
 
 /**
@@ -123,9 +123,22 @@ const tmpV = new THREE.Vector3();
  *    per-landmark image z isn't used.
  *  - Then pose filtering, a deadband and a lead (PalmPoseFilter).
  */
+export interface PalmTrackerOptions {
+  /**
+   * Refine the pose against the image landmarks, with this prior on the
+   * world-landmark rotation (px per radian); null: rotation from the world
+   * landmarks alone.
+   */
+  refinePx: number | null;
+  /** The point whose image position is filtered and kept exact: the wound's centre or the palm's. */
+  anchor: 'wound' | 'centroid';
+}
+
+export const PALM_TRACKER: PalmTrackerOptions = { refinePx: 400, anchor: 'wound' };
+
 export class WebcamPalmTracker {
   readonly template = new PalmTemplate();
-  readonly filter = new PalmPoseFilter();
+  readonly filter: PalmPoseFilter;
   readonly pose = createCameraPalm();
   /** Image position of the wound's centre (video px), filtered and raw, for the jitter meter. */
   readonly woundPx = { x: 0, y: 0, rawX: 0, rawY: 0 };
@@ -146,6 +159,19 @@ export class WebcamPalmTracker {
   private cy = 0;
   private videoWidth = 1;
   private videoHeight = 1;
+  private readonly imagePx = new Float64Array(12);
+  private readonly priorQ = new THREE.Quaternion();
+  private readonly fitQ = new THREE.Quaternion();
+  private readonly fitPos = new THREE.Vector3();
+  private readonly anchor = new THREE.Vector3();
+  private readonly camera = { focal: 1, cx: 0, cy: 0 };
+
+  constructor(
+    private readonly options: PalmTrackerOptions = PALM_TRACKER,
+    filter = new PalmPoseFilter(),
+  ) {
+    this.filter = filter;
+  }
 
   /**
    * Updates the pose from one detection.
@@ -166,6 +192,9 @@ export class WebcamPalmTracker {
     this.cy = videoHeight / 2;
     this.videoWidth = videoWidth;
     this.videoHeight = videoHeight;
+    this.camera.focal = this.focal;
+    this.camera.cx = this.cx;
+    this.camera.cy = this.cy;
 
     // World landmarks → three.js axes (MediaPipe: y down, z away).
     for (let k = 0; k < 6; k++) {
@@ -222,28 +251,53 @@ export class WebcamPalmTracker {
     }
     // Edge-on, the palm's outline gives no size; the wound is faded out by then anyway.
     if (!(den > (REAL_PALM_WIDTH * 0.15) ** 2) || !(num > 0)) return (this.pose.valid = false);
+
+    // First guess (weak perspective), then fitted to the image landmarks.
+    const fitQ = this.fitQ.copy(q);
+    const fitPos = this.toCameraPosition(u, v, num / den, q, template, this.fitPos);
+    if (this.options.refinePx !== null) {
+      for (let k = 0; k < 6; k++) {
+        const lm = image[PALM_LANDMARKS[k]];
+        this.imagePx[k * 2] = lm.x * videoWidth;
+        this.imagePx[k * 2 + 1] = lm.y * videoHeight;
+      }
+      this.priorQ.copy(q);
+      refinePalmPose(template, PALM_WEIGHTS, this.imagePx, this.camera, this.priorQ, this.options.refinePx, fitQ, fitPos);
+    }
+
+    // The anchor (the wound's centre): its image position and depth are what's filtered.
+    this.updateWoundCentre(template);
+    if (this.options.anchor === 'wound') this.anchor.copy(this.woundLocal);
+    else this.anchor.set(0, 0, 0);
+    const a = tmpV.copy(this.anchor).applyQuaternion(fitQ).add(fitPos);
     const m = this.measurement;
     m.t = t;
-    m.u = u;
-    m.v = v;
-    m.scale = num / den;
+    m.u = this.cx + (this.focal * a.x) / -a.z;
+    m.v = this.cy - (this.focal * a.y) / -a.z;
+    m.scale = this.focal / -a.z;
+    m.q.copy(fitQ);
 
     const f = this.filter.update(m);
-    this.toCamera(f.u, f.v, f.scale, f.q, template);
+    this.fromAnchor(f.u, f.v, f.scale, f.q, this.pose.position);
+    this.pose.quaternion.copy(f.q);
     this.pose.template.set(template);
     this.pose.templateVersion = this.template.ready ? this.template.version : -1;
     this.pose.valid = true;
 
     // Jitter meter: where the wound's centre lands in the image, filtered and raw.
-    this.updateWoundCentre(template);
     this.project(this.pose.position, this.pose.quaternion, this.woundLocal, this.woundPx, false);
-    tmpQ.copy(m.q);
-    const rawPos = tmpV;
-    this.toCameraPosition(m.u, m.v, m.scale, m.q, template, rawPos);
-    this.project(rawPos, tmpQ, this.woundLocal, this.woundPx, true);
+    const rawPos = this.fromAnchor(m.u, m.v, m.scale, m.q, tmpV4);
+    this.project(rawPos, m.q, this.woundLocal, this.woundPx, true);
     this.jitter.add(t, this.woundPx.x, this.woundPx.y);
     this.rawJitter.add(t, this.woundPx.rawX, this.woundPx.rawY);
     return true;
+  }
+
+  /** The palm frame's origin, given where the anchor appears (u, v) and its size (px per metre). */
+  private fromAnchor(u: number, v: number, scale: number, q: THREE.Quaternion, out: THREE.Vector3) {
+    const depth = this.focal / scale;
+    out.set(((u - this.cx) * depth) / this.focal, (-(v - this.cy) * depth) / this.focal, -depth);
+    return out.sub(tmpV5.copy(this.anchor).applyQuaternion(q));
   }
 
   /**
@@ -327,11 +381,6 @@ export class WebcamPalmTracker {
     return out;
   }
 
-  private toCamera(u: number, v: number, scale: number, q: THREE.Quaternion, template: Float64Array) {
-    this.toCameraPosition(u, v, scale, q, template, this.pose.position);
-    this.pose.quaternion.copy(q);
-  }
-
   /** The wound's centre on the palm surface, canonical coordinates. */
   private updateWoundCentre(template: Float64Array) {
     const version = this.template.ready ? this.template.version : -1;
@@ -366,3 +415,5 @@ export class WebcamPalmTracker {
 
 const tmpV2 = new THREE.Vector3();
 const tmpV3 = new THREE.Vector3();
+const tmpV4 = new THREE.Vector3();
+const tmpV5 = new THREE.Vector3();
