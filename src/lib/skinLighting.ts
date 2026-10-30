@@ -30,10 +30,12 @@ export interface SkinLighting {
   cast: [number, number, number];
   /** Albedo for skin-coloured parts of the wound (linear RGB). */
   skinAlbedo: [number, number, number];
+  /** The skin as the camera sees it around the palm (linear RGB); null before a reading. */
+  seen: [number, number, number] | null;
 }
 
 export function createSkinLighting(): SkinLighting {
-  return { exposure: 1, cast: [1, 1, 1], skinAlbedo: [...REF_SKIN_LINEAR] };
+  return { exposure: 1, cast: [1, 1, 1], skinAlbedo: [...REF_SKIN_LINEAR], seen: null };
 }
 
 export function lightingFromSkin(sample: SkinSample, out: SkinLighting): SkinLighting {
@@ -41,8 +43,10 @@ export function lightingFromSkin(sample: SkinSample, out: SkinLighting): SkinLig
     out.exposure = 1;
     out.cast = [1, 1, 1];
     out.skinAlbedo = [...REF_SKIN_LINEAR];
+    out.seen = null;
     return out;
   }
+  out.seen = [sample.color[0], sample.color[1], sample.color[2]];
   out.exposure = Math.min(Math.max(sample.luminance / REF_LUMINANCE, MIN_EXPOSURE), MAX_EXPOSURE);
   for (let c = 0; c < 3; c++) {
     const chroma = sample.color[c] / sample.luminance;
