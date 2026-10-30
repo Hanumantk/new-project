@@ -16,7 +16,7 @@ import {
 } from './palmModel';
 import { PalmPoseFilter, type PalmMeasurement } from './poseFilter';
 import { refinePalmPose } from './palmPnP';
-import { SKIN_LOCK, SkinLock, type PatchReader, type SkinLockParams } from './skinFlow';
+import { SkinLock, type PatchReader, type SkinLockParams } from './skinFlow';
 import { fitRotation } from './rigidFit';
 
 /** Vertical field of view of a typical 16:9 laptop webcam (~65° horizontal). */
@@ -153,7 +153,8 @@ export const PALM_TRACKER: PalmTrackerOptions = {
   anchor: 'wound',
   imageWeights: IMAGE_WEIGHTS,
   skinLift: PALM_SKIN_LIFT,
-  skinLock: SKIN_LOCK,
+  // Off until it's been tuned on footage with real skin texture.
+  skinLock: null,
 };
 
 export class WebcamPalmTracker {
@@ -291,7 +292,9 @@ export class WebcamPalmTracker {
 
     // The anchor (the wound's centre): its image position and depth are what's filtered.
     this.updateWoundCentre(template);
-    if (this.options.anchor === 'wound') this.anchor.copy(this.woundLocal);
+    // At joint level, under the wound: the lift onto the skin is then applied
+    // through the smoothed rotation, so rotation noise doesn't shake the anchor.
+    if (this.options.anchor === 'wound') this.anchor.copy(this.woundLocal).setY(this.woundLocal.y - this.options.skinLift);
     else this.anchor.set(0, 0, 0);
     const a = tmpV.copy(this.anchor).applyQuaternion(fitQ).add(fitPos);
     const m = this.measurement;
