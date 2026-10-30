@@ -3,10 +3,11 @@ Converts the hand model from Blender to public/models/Hand.glb.
 
 Keeps the left hand (Hand.L on armature Hand_Left), renames its deform bones
 to the names src/lib/xrHandModel.ts drives, drops the IK control bones, sets
-the rest pose and exports at a chosen Multires level (2 = ~17,500 vertices).
+the rest pose and exports at a chosen Multires level (3 = full detail, ~70,000
+vertices; 2 = ~17,500).
 
     pip install bpy==5.2.3   # Blender as a Python module (Python 3.13)
-    python scripts/hand-model/export_hand.py "Hands_ armature.blend" public/models/Hand.glb 2
+    python scripts/hand-model/export_hand.py "Hands_ armature.blend" public/models/Hand.glb 3
 """
 import bpy, sys
 src, out, level = sys.argv[-3], sys.argv[-2], int(sys.argv[-1])

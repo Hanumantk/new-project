@@ -96,18 +96,15 @@ A detailed sculpted hand model (`public/models/Hand.glb`) is posed on the
 headset's hand joints every frame. It was converted from the project
 owner's `Hands_ armature.blend`:
 - the left hand only (it's mirrored for the right);
-- its sculpt detail at Multires level 2, about 17,500 vertices;
+- its full sculpt detail (Multires level 3, about 70,000 vertices);
 - its 22 deform bones renamed to wrist, metacarpals, phalanges and thumb
   (see `src/lib/xrHandModel.ts`).
 
-To regenerate it, run `scripts/hand-model/export_hand.py`. It's sized
-to your hand over about half a second when the hand first appears (and on
-**Calibrate**):
-- Each bone stretches to that segment of your hand.
-- Its thickness comes from the headset's own measurement of each joint's
-  radius (centre to skin) for your hand.
-- The palm's width follows your knuckle span.
-It's mirrored for a right hand.
+To regenerate it, run `scripts/hand-model/export_hand.py`.
+
+The model keeps its own shape and proportions. It's only scaled as a whole to your hand's size (palm
+length, measured over about half a second when the hand first appears and
+on **Calibrate**). It's mirrored for a right hand.
 The wound scales with your palm too: `LENGTH_CM` is its length on an
 average hand (`REFERENCE_PALM_CM` from wrist to middle knuckle).
 - The wound is laid onto that model's palm skin, smoothed over about 1 cm
