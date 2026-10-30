@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 /**
- * Materials for the headset wound, seen over passthrough (no camera pixels
- * to sample, so the skin tone is chosen on the panel).
+ * The headset wound's material, seen over passthrough. Its skin tone comes
+ * from the camera when the headset allows it, otherwise from the panel.
  *
  * Per vertex the wound carries `woundSurf` (computed at load, before
  * skinning; see woundGeometry.ts): x = height −1 (cut bottom) … 0 (skin
@@ -13,7 +13,7 @@ import * as THREE from 'three';
 /** Look of the headset wound (sRGB hex where a colour). */
 export const XR_WOUND_LOOK = {
   inflamed: '#c9585a',
-  inflamedAmount: 0.55,
+  inflamedAmount: 0.35,
   wall: '#8b1a1a',
   blood: '#5a0a0f',
   bloodDeep: '#3a0508',
@@ -155,56 +155,6 @@ export function createXRWoundMaterial(): XRWoundMaterial {
   };
   material.customProgramCacheKey = () => 'xr-wound';
   return material as XRWoundMaterial;
-}
-
-export type XRDecalKind = 'bruise' | 'shadow';
-
-/**
- * A feathered decal on the palm around the wound (skinned like it): a soft
- * purple-brown bruise halo, or a thin contact shadow along the rim. Normal
- * alpha blending (passthrough has no pixels to multiply with).
- * @param halfWidth, halfLength  The wound's half-size (m), to follow its outline.
- * @param planeHalf  The decal plane's half-size (m: across, along); it fades out before its edges.
- */
-export function createXRDecalMaterial(kind: XRDecalKind, halfWidth: number, halfLength: number, planeHalf: THREE.Vector2) {
-  const material = new THREE.MeshBasicMaterial({
-    color: kind === 'bruise' ? '#5e3a48' : '#000000',
-    transparent: true,
-    depthWrite: false,
-    toneMapped: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -2,
-  });
-  const uniforms = { woundHalf: { value: new THREE.Vector2(halfWidth, halfLength) }, planeHalf: { value: planeHalf } };
-  material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vLocal;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLocal = position.xz;');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nuniform vec2 woundHalf;\nuniform vec2 planeHalf;\nvarying vec2 vLocal;\n${NOISE}`)
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
-        // Distance from the wound's outline (a stadium round its long axis), in half-widths: 1 = its edge.
-        float along = max(abs(vLocal.y) - (woundHalf.y - woundHalf.x), 0.0);
-        float d = length(vec2(vLocal.x, along)) / woundHalf.x;
-        // Feathered well inside the plane, so its edges never show.
-        diffuseColor.a *= 1.0 - smoothstep(0.65, 1.0, length(vLocal / planeHalf));
-        ${
-          kind === 'bruise'
-            ? `// Soft halo, ~7 x 4 cm, mottled, alpha <= 0.35.
-              float halo = 1.0 - smoothstep(0.8, 3.4, d);
-              diffuseColor.a *= 0.35 * halo * (0.6 + 0.4 * xwFbm(vLocal * 120.0));`
-            : `// Thin band just outside the rim, alpha <= 0.3.
-              float band = smoothstep(0.7, 1.0, d) * (1.0 - smoothstep(1.0, 1.45, d));
-              diffuseColor.a *= 0.3 * band;`
-        }`,
-      );
-  };
-  material.customProgramCacheKey = () => `xr-decal-${kind}`;
-  return material;
 }
 
 /** The skin tone for a preset colour and a fine adjustment (0..1, 0.5 = as is): brightness ±15%, a slight hue shift. */

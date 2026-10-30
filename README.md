@@ -102,7 +102,7 @@ panel.
 
 ### Headset wound: settings and testing
 
-- **Panel:** the in-headset panel (below and right of straight ahead) picks the hand (Left or Right; only that hand is ever used), **Re-attach** (re-binds the wound to your palm as it is now), and the skin tone (6 presets and a fine slider). Press with an index fingertip; settings are saved.
+- **Panel:** the in-headset panel (below and right of straight ahead) picks the hand (Left or Right; only that hand is ever used), **Re-attach** (re-binds the wound to your palm as it is now), and the skin tone. **Auto** (on by default) reads your palm's real colour from the headset camera when the browser grants WebXR camera access: green means it's working, amber means no camera access, so the presets are used. Picking a swatch or moving the fine slider switches to manual. Press with an index fingertip; settings are saved.
 - **Tunable constants** (`src/components/XRWound.tsx`): `LENGTH_CM`, `ANGLE_DEG`, `OFFSET_MM`, `PALM_OFFSET_MM`, `USE_SKINNING`. The look is `XR_WOUND_LOOK` in `src/lib/xrWoundMaterial.ts`.
 - **Emulator:** in Chrome with Meta's Immersive Web Emulator, choose Quest 3, switch input to hand tracking, then **Start mixed reality → Enter mixed reality**. Pose the left hand with its palm facing you; the wound appears on it, and the panel switches hands.
 - **Headset:** open the site in the Quest browser, allow hand tracking, put the controllers down and hold up the chosen palm. Check that the wound stays glued as you move and turn it fast, bends when you cup the palm, and is hidden by curled fingers and when the back of the hand faces you.

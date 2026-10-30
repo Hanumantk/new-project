@@ -13,9 +13,10 @@ const STANDING_EYE_HEIGHT = 1.6;
 
 /**
  * Mixed reality also asks for what the material mat uses to find and stick to
- * the table, and for the room's light (used for the wound if granted).
+ * the table, the room's light, and the camera image (to match the wound to
+ * the palm's real colour), each used only if granted.
  */
-const MAT_FEATURES = ['plane-detection', 'anchors', 'hit-test', 'light-estimation'];
+const MAT_FEATURES = ['plane-detection', 'anchors', 'hit-test', 'light-estimation', 'camera-access'];
 
 /** Asks for a session, retrying with fewer requirements if the first ask is refused. */
 async function requestSession(xr: XRSystem, mode: XRSessionMode): Promise<XRSession> {

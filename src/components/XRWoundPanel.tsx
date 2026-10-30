@@ -17,6 +17,7 @@ type Target =
   | { kind: 'hand'; side: HandSide }
   | { kind: 'reattach' }
   | { kind: 'skin'; index: number }
+  | { kind: 'auto' }
   | { kind: 'fine' };
 
 interface Region {
@@ -35,11 +36,12 @@ const REGIONS: Region[] = [
   { target: { kind: 'reattach' }, x0: 0.02, x1: 0.11, y0: 0.017, y1: 0.045 },
   ...SKIN_PRESETS.map((_, index) => ({
     target: { kind: 'skin', index } as Target,
-    x0: -0.11 + index * 0.037,
-    x1: -0.11 + index * 0.037 + 0.03,
+    x0: -0.11 + index * 0.031,
+    x1: -0.11 + index * 0.031 + 0.026,
     y0: -0.016,
     y1: 0.011,
   })),
+  { target: { kind: 'auto' }, x0: 0.076, x1: 0.11, y0: -0.016, y1: 0.011 },
   { target: { kind: 'fine' }, x0: -0.09, x1: 0.09, y0: -0.045, y1: -0.024 },
 ];
 
@@ -123,13 +125,14 @@ export function XRWoundPanel({ active }: { active: boolean }) {
       if (t.kind === 'fine') {
         // A slider: follows the fingertip while it's on it.
         const value = THREE.MathUtils.clamp((x - region.x0) / (region.x1 - region.x0), 0, 1);
-        if (Math.abs(value - xrPrefs.skinFine) > 0.01) setXRPrefs({ skinFine: value });
+        if (Math.abs(value - xrPrefs.skinFine) > 0.01 || xrPrefs.skinAuto) setXRPrefs({ skinFine: value, skinAuto: false });
         continue;
       }
       if (!s.armed[i]) continue;
       s.armed[i] = false;
       if (t.kind === 'hand') setXRPrefs({ hand: t.side });
-      else if (t.kind === 'skin') setXRPrefs({ skinPreset: t.index });
+      else if (t.kind === 'skin') setXRPrefs({ skinPreset: t.index, skinAuto: false });
+      else if (t.kind === 'auto') setXRPrefs({ skinAuto: !xrPrefs.skinAuto });
       else {
         requestReattach();
         s.flash = 0.4;
@@ -172,7 +175,7 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
       ctx.beginPath();
       ctx.roundRect(x, y, w, h, 18);
       ctx.fill();
-      if (xrPrefs.skinPreset === t.index) {
+      if (!xrPrefs.skinAuto && xrPrefs.skinPreset === t.index) {
         ctx.lineWidth = 10;
         ctx.strokeStyle = '#2f9e63';
         ctx.stroke();
@@ -195,6 +198,18 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
       ctx.arc(x + w * xrPrefs.skinFine, cy, 26, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      continue;
+    }
+    if (t.kind === 'auto') {
+      // On: green (camera colour in use) or amber (no camera access: presets are used).
+      ctx.fillStyle = !xrPrefs.skinAuto ? '#e4e8e5' : xrPrefs.autoWorking ? '#2f9e63' : '#d39a2c';
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, 24);
+      ctx.fill();
+      ctx.fillStyle = xrPrefs.skinAuto ? '#ffffff' : '#1f2a24';
+      ctx.font = '600 38px "DM Sans", system-ui, sans-serif';
+      ctx.fillText('Auto', x + w / 2, y + h / 2 + 2);
+      ctx.font = '600 44px "DM Sans", system-ui, sans-serif';
       continue;
     }
     const selected = (t.kind === 'hand' && xrPrefs.hand === t.side) || (t.kind === 'reattach' && reattachFlash);

@@ -6,13 +6,14 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
 import { XRHandOccluder } from '../lib/xrHandOccluder';
-import { SKIN_PRESETS, xrPrefs, type HandSide } from '../lib/xrPrefs';
-import { createXRDecalMaterial, createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
+import { SKIN_PRESETS, setAutoWorking, xrPrefs, type HandSide } from '../lib/xrPrefs';
+import { XRSkinSampler } from '../lib/xrSkinSampler';
+import { createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
 
 const WOUND_URL = `${import.meta.env.BASE_URL}models/Wound.glb`;
 
 /** The wound's length (cm)… */
-export const LENGTH_CM = 4.5;
+export const LENGTH_CM = 6.5;
 /** …turned this far from the palm's long axis towards the thumb (degrees)… */
 export const ANGLE_DEG = 35;
 /** …this far above the skin (mm)… */
@@ -20,8 +21,8 @@ export const OFFSET_MM = 0.5;
 /** …and moved on the palm (mm): [towards the thumb, towards the fingers], from the metacarpals' centre (their joints sit at the base of the palm). */
 export const PALM_OFFSET_MM: readonly [number, number] = [0, 20];
 
-/** The bruise halo's size (cm): across, along the wound. */
-const BRUISE_SIZE_CM: readonly [number, number] = [4, 7];
+/** How often the palm's colour is read from the camera, when allowed (s). */
+const SKIN_SAMPLE_SECONDS = 0.5;
 
 /** After the hand is lost the wound stays put this long (s)… */
 const HOLD_SECONDS = 0.5;
@@ -51,12 +52,13 @@ interface PalmFrame {
  */
 class PalmFrameReader {
   readonly origin = new THREE.Vector3();
+  /** Along the palm (towards the fingers) and across it (towards the thumb), unit. */
+  readonly along = new THREE.Vector3();
+  readonly across = new THREE.Vector3();
   /** Out of the palm (unit). */
   readonly normal = new THREE.Vector3();
   /** On the skin above the metacarpals' centre. */
   readonly skin = new THREE.Vector3();
-  private readonly along = new THREE.Vector3();
-  private readonly across = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
   private readonly x = new THREE.Vector3();
   private readonly basis = new THREE.Matrix4();
@@ -281,51 +283,18 @@ export function XRWound({ strength }: XRWoundProps) {
     return { root, bones };
   }, []);
 
-  // The wound and its decals (bruise, contact shadow), parented to the scene (never to the hand).
+  // The wound, parented to the scene (never to the hand). No decals around
+  // it: nothing draws a border or halo on the skin.
   const parts = useMemo(() => {
     if (!info) return null;
-    const make = (geometry: THREE.BufferGeometry, m: THREE.Material, order: number, lift: number) => {
-      const o = USE_SKINNING ? new THREE.SkinnedMesh(geometry, m) : new THREE.Mesh(geometry, m);
-      if (o instanceof THREE.SkinnedMesh) o.bind(new THREE.Skeleton(rig.bones), new THREE.Matrix4());
-      o.frustumCulled = false;
-      o.renderOrder = order;
-      o.visible = false;
-      o.userData.lift = lift;
-      return o;
-    };
-    const decal = (width: number, length: number) => {
-      const g = new THREE.PlaneGeometry(width, length, 24, 40).rotateX(-Math.PI / 2);
-      addSkinAttributes(g);
-      return g;
-    };
-    const { halfWidth, halfLength } = info;
-    const bruiseHalf = new THREE.Vector2(BRUISE_SIZE_CM[0] / 200, BRUISE_SIZE_CM[1] / 200);
-    const bruise = make(
-      decal(bruiseHalf.x * 2, bruiseHalf.y * 2),
-      createXRDecalMaterial('bruise', halfWidth, halfLength, bruiseHalf),
-      1,
-      0.0002,
-    );
-    const shadowHalf = new THREE.Vector2(halfWidth * 2.2, halfLength + halfWidth * 1.4);
-    const shadow = make(
-      decal(shadowHalf.x * 2, shadowHalf.y * 2),
-      createXRDecalMaterial('shadow', halfWidth, halfLength, shadowHalf),
-      2,
-      0.0003,
-    );
-    const wound = make(info.geometry, material, 3, 0);
-    return { wound, all: [bruise, shadow, wound] };
+    const o = USE_SKINNING ? new THREE.SkinnedMesh(info.geometry, material) : new THREE.Mesh(info.geometry, material);
+    if (o instanceof THREE.SkinnedMesh) o.bind(new THREE.Skeleton(rig.bones), new THREE.Matrix4());
+    o.frustumCulled = false;
+    o.renderOrder = 3;
+    o.visible = false;
+    o.userData.lift = 0;
+    return { wound: o, all: [o] };
   }, [info, material, rig]);
-  useEffect(
-    () => () =>
-      parts?.all.forEach((o) => {
-        if (o !== parts.wound) {
-          o.geometry.dispose();
-          (o.material as THREE.Material).dispose();
-        }
-      }),
-    [parts],
-  );
   const mesh = parts?.wound ?? null;
 
   const state = useMemo(
@@ -340,6 +309,9 @@ export function XRWound({ strength }: XRWoundProps) {
       one: new THREE.Vector3(1, 1, 1),
       lifted: new THREE.Vector3(),
       up: new THREE.Vector3(),
+      sampler: new XRSkinSampler(),
+      sampleIn: 0,
+      samplePoints: [0, 1, 2, 3, 4].map(() => new THREE.Vector3()),
     }),
     [],
   );
@@ -352,7 +324,9 @@ export function XRWound({ strength }: XRWoundProps) {
     if (!mesh || !parts) return;
     if (state.skinVersion !== xrPrefs.version) {
       state.skinVersion = xrPrefs.version;
-      skinToneColor(SKIN_PRESETS[xrPrefs.skinPreset], xrPrefs.skinFine, material.userData.uniforms.skinTone.value);
+      if (!(xrPrefs.skinAuto && xrPrefs.autoWorking)) {
+        skinToneColor(SKIN_PRESETS[xrPrefs.skinPreset], xrPrefs.skinFine, material.userData.uniforms.skinTone.value);
+      }
     }
     const hand = findHand(xrPrefs.hand);
     // Joints are all-or-nothing: the wrist stands for the whole hand.
@@ -375,6 +349,25 @@ export function XRWound({ strength }: XRWoundProps) {
         for (const o of parts.all) place(o);
       }
       occluder.update(hand, state.reader.skin, state.reader.normal);
+      // Auto skin tone: the real palm's colour from the camera, if the session allows it.
+      state.sampleIn -= delta;
+      if (xrPrefs.skinAuto && state.sampleIn <= 0) {
+        state.sampleIn = SKIN_SAMPLE_SECONDS;
+        const r = state.reader;
+        const pts = state.samplePoints;
+        pts[0].copy(r.skin);
+        pts[1].copy(r.skin).addScaledVector(r.along, 0.015);
+        pts[2].copy(r.skin).addScaledVector(r.along, -0.015);
+        pts[3].copy(r.skin).addScaledVector(r.across, 0.015);
+        pts[4].copy(r.skin).addScaledVector(r.across, -0.015);
+        if (state.sampler.sample(gl, pts)) {
+          const c = state.sampler.srgb;
+          material.userData.uniforms.skinTone.value.setRGB(c.x, c.y, c.z, THREE.SRGBColorSpace);
+          setAutoWorking(true);
+        } else if (!state.sampler.available) {
+          setAutoWorking(false);
+        }
+      }
       state.placed = true;
       state.lostFor = 0;
     } else {
