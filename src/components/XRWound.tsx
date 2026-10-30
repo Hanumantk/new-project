@@ -13,8 +13,12 @@ import { createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
 
 const WOUND_URL = `${import.meta.env.BASE_URL}models/Wound.glb`;
 
-/** The wound's length (cm)… */
+/**
+ * The wound's length (cm) on an average hand (REFERENCE_PALM_CM from wrist to
+ * middle knuckle); it's scaled with the user's own palm…
+ */
 export const LENGTH_CM = 8.5;
+export const REFERENCE_PALM_CM = 9.5;
 /** …turned this far from the palm's long axis towards the thumb (degrees)… */
 export const ANGLE_DEG = 35;
 /** …this far above the skin (mm)… */
@@ -354,8 +358,11 @@ export function XRWound({ strength }: XRWoundProps) {
 
   /** Lays the wound onto the hand model's palm skin as it is this frame and binds it to the model's bones. */
   function bind(skinned: THREE.SkinnedMesh, model: XRHandModel): boolean {
+    // In proportion to this hand: bigger on a bigger palm, smaller on a smaller one.
+    const handScale = model.palmLength / (REFERENCE_PALM_CM / 100);
     skinned.position.copy(state.frame.point);
     skinned.quaternion.copy(state.frame.quaternion);
+    skinned.scale.setScalar(handScale);
     skinned.updateMatrixWorld(true);
     const handGeometry = model.data.geometry;
     const count = handGeometry.getAttribute('position').count;
@@ -377,7 +384,7 @@ export function XRWound({ strength }: XRWoundProps) {
         skinWeight: handGeometry.getAttribute('skinWeight') as THREE.BufferAttribute,
       },
       state.toWound,
-      OFFSET_MM / 1000,
+      OFFSET_MM / 1000 / handScale,
       g,
     );
     if (!ok) return false;
