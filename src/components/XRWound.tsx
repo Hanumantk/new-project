@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
+import { XRHandOccluder } from '../lib/xrHandOccluder';
 import { xrPrefs, type HandSide } from '../lib/xrPrefs';
 
 const WOUND_URL = `${import.meta.env.BASE_URL}models/Wound.glb`;
@@ -43,8 +44,11 @@ interface PalmFrame {
  * metacarpals' mean radius.
  */
 class PalmFrameReader {
-  private readonly origin = new THREE.Vector3();
-  private readonly normal = new THREE.Vector3();
+  readonly origin = new THREE.Vector3();
+  /** Out of the palm (unit). */
+  readonly normal = new THREE.Vector3();
+  /** On the skin above the metacarpals' centre. */
+  readonly skin = new THREE.Vector3();
   private readonly along = new THREE.Vector3();
   private readonly across = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
@@ -76,6 +80,7 @@ class PalmFrameReader {
     this.across.crossVectors(this.normal, this.along);
     if (this.dir.subVectors(thumb.position, this.origin).dot(this.across) < 0) this.across.negate();
 
+    this.skin.copy(this.origin).addScaledVector(this.normal, this.radius);
     out.point
       .copy(this.origin)
       .addScaledVector(this.normal, this.radius + OFFSET_MM / 1000)
@@ -179,7 +184,21 @@ function computeSkinWeights(mesh: THREE.Mesh, bones: THREE.Bone[]) {
 export function XRWound({ strength }: XRWoundProps) {
   const findHand = useHandSpaces();
   const [info, setInfo] = useState<WoundGeometryInfo | null>(null);
-  const material = useMemo(() => new THREE.MeshStandardMaterial({ color: '#8b1a1a', transparent: true }), []);
+  const material = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#8b1a1a',
+        transparent: true,
+        // Always wins over the palm slab just below it.
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -4,
+      }),
+    [],
+  );
+  // Real fingers cover the wound; the back of the hand hides it.
+  const occluder = useMemo(() => new XRHandOccluder(), []);
+  useEffect(() => () => occluder.dispose(), [occluder]);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,8 +265,8 @@ export function XRWound({ strength }: XRWoundProps) {
   );
 
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, rig, findHand };
-  }, [state, mesh, rig, findHand]);
+    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, rig, findHand, occluder };
+  }, [state, mesh, rig, findHand, occluder]);
 
   useFrame((_, delta) => {
     if (!mesh) return;
@@ -272,6 +291,7 @@ export function XRWound({ strength }: XRWoundProps) {
         mesh.position.copy(state.frame.point);
         mesh.quaternion.copy(state.frame.quaternion);
       }
+      occluder.update(hand, state.reader.skin, state.reader.normal);
       state.placed = true;
       state.lostFor = 0;
     } else {
@@ -281,6 +301,7 @@ export function XRWound({ strength }: XRWoundProps) {
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;
     material.opacity = opacity;
     mesh.visible = opacity > 0;
+    occluder.root.visible = mesh.visible;
   });
 
   /** Puts the wound on the palm surface and binds it to the bones as they are this frame. */
@@ -298,6 +319,7 @@ export function XRWound({ strength }: XRWoundProps) {
   return (
     <>
       <primitive object={rig.root} />
+      <primitive object={occluder.root} />
       {mesh && <primitive object={mesh} />}
     </>
   );
