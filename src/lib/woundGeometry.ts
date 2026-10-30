@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
-/** The wound's real length along its long axis (metres). */
-export const WOUND_LENGTH = 0.05;
+/** The wound's real length along its long axis (metres), for an 8 cm wide palm. */
+export const WOUND_LENGTH = 0.065;
 /** Width of the outer band over which the wound blends into the real skin (metres). */
 export const EDGE_BLEND = 0.0035;
 /** How far beyond the cut's edge torn, raw tissue reaches up the lips (metres). */

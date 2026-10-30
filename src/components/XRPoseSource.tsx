@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
 import { JointPalmFitter } from '../lib/jointPalm';
+import { PALM_SKIN_LIFT } from '../lib/palmModel';
 import {
   CLOSED_HAND_SCORE,
   OPEN_HAND_SCORE,
@@ -142,8 +143,11 @@ export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
     }
 
     const palm = hand.joints['middle-finger-metacarpal'];
+    // The palm surface already sits PALM_SKIN_LIFT above the joints; make up the rest of the joint's radius.
     out.surfaceOffset =
-      (palm?.jointRadius ?? DEFAULT_PALM_RADIUS) + (showHands ? MODEL_CLEARANCE : SKIN_CLEARANCE);
+      (palm?.jointRadius ?? DEFAULT_PALM_RADIUS) -
+      PALM_SKIN_LIFT * out.palm.scale +
+      (showHands ? MODEL_CLEARANCE : SKIN_CLEARANCE);
     out.isRightHand = state.handedness.get(hand) === 'right';
     out.open = opennessFromJoints(out.joints) > (out.open ? CLOSED_HAND_SCORE : OPEN_HAND_SCORE);
     out.tracked = state.palmFitter.update(out.joints, out.isRightHand, out.palm);

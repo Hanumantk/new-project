@@ -43,12 +43,56 @@
       fill.position.set(-1, 0.2, 0.6);
       scene.add(fill);
 
+      /**
+       * Skin with real texture (pores, mottling, palm creases), generated from
+       * each point's rest-pose position so it stays attached to the skin as the
+       * hand moves: real palms have this texture, and both hand tracking and
+       * optical flow depend on it.
+       */
+      function createSkinMaterial() {
+        const material = new THREE.MeshStandardMaterial({ color: '#d9a386', roughness: 0.62 });
+        material.onBeforeCompile = (shader) => {
+          shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', '#include <common>\nvarying vec3 vRest;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRest = position;');
+          shader.fragmentShader = shader.fragmentShader
+            .replace(
+              '#include <common>',
+              `#include <common>
+              varying vec3 vRest;
+              float h3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+              float n3(vec3 x) {
+                vec3 i = floor(x), f = fract(x);
+                f = f * f * (3.0 - 2.0 * f);
+                return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+                           mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+              }`,
+            )
+            .replace(
+              '#include <color_fragment>',
+              `#include <color_fragment>
+              {
+                vec3 p = vRest;
+                float blotch = n3(p * 180.0) * 0.6 + n3(p * 420.0) * 0.4;
+                float pores = n3(p * 2600.0) * 0.6 + n3(p * 5200.0) * 0.4;
+                // Creases: thin dark lines where a slowly varying noise crosses its middle.
+                float c1 = abs(n3(p * vec3(55.0, 70.0, 40.0)) - 0.5);
+                float c2 = abs(n3(p * vec3(120.0, 150.0, 90.0) + 7.0) - 0.5);
+                float crease = (1.0 - smoothstep(0.0, 0.018, c1)) * 0.55 + (1.0 - smoothstep(0.0, 0.012, c2)) * 0.3;
+                diffuseColor.rgb *= (0.9 + 0.2 * blotch) * (0.9 + 0.2 * pores) * (1.0 - 0.35 * crease);
+                diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.05, 0.93, 0.92), blotch * 0.5);
+              }`,
+            );
+        };
+        return material;
+      }
+
       // WebXR "generic hand" (right), MIT licence: see LICENSE-generic-hand.md.
       const gltf = await new GLTFLoader().loadAsync('./generic-hand-right.glb');
       const hand = gltf.scene;
       hand.traverse((o) => {
         if (o.isMesh) {
-          o.material = new THREE.MeshStandardMaterial({ color: '#d9a386', roughness: 0.62 });
+          o.material = createSkinMaterial();
           o.frustumCulled = false;
         }
       });

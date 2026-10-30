@@ -139,16 +139,13 @@ export const WOUND_LOOK = {
   deepest: '#3a0508',
   /** The cut's walls (raw tissue). */
   wall: '#8b1a1a',
-  /** The swollen rim: the real skin pushed this far towards inflamed red. */
-  inflamed: '#b4473c',
-  inflamedAmount: 0.45,
   /** Roughness of the wet cut and of the skin around it. */
   wetRoughness: 0.1,
   dryRoughness: 0.6,
   /** Wrapped-light subsurface scattering: how far light wraps round, and its tint. */
   sssWrap: 0.55,
   sssTint: '#ff5a3c',
-  sssStrength: 0.55,
+  sssStrength: 0.3,
   /** Occlusion: how dark the deepest point and the creases get (0..1). */
   depthOcclusion: 0.6,
   creaseOcclusion: 0.45,
@@ -165,8 +162,6 @@ export interface WoundMaterialUniforms extends ConformUniforms {
   colDeep: { value: THREE.Color };
   colDeepest: { value: THREE.Color };
   colWall: { value: THREE.Color };
-  colInflamed: { value: THREE.Color };
-  inflamedAmount: { value: number };
   wetRoughness: { value: number };
   dryRoughness: { value: number };
   sssWrap: { value: number };
@@ -179,8 +174,8 @@ export interface WoundMaterialUniforms extends ConformUniforms {
 /**
  * The wound: three's physical material, with the mesh bent onto the palm and
  *  - colour from height and nearness to the cut: dark blood deep down, raw
- *    red walls with mottling, the rim as the real skin swollen red, and the
- *    outer edge fading into the real skin (alpha falls to 0),
+ *    red walls with mottling, the rim in the real skin's tone, and the outer
+ *    edge fading into the real skin (alpha falls to 0),
  *  - wet clearcoat and low roughness only in the cut,
  *  - occlusion from depth and creases,
  *  - procedural micro bumps,
@@ -204,8 +199,6 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
     colDeep: { value: srgb(L.deep) },
     colDeepest: { value: srgb(L.deepest) },
     colWall: { value: srgb(L.wall) },
-    colInflamed: { value: srgb(L.inflamed) },
-    inflamedAmount: { value: L.inflamedAmount },
     wetRoughness: { value: L.wetRoughness },
     dryRoughness: { value: L.dryRoughness },
     sssWrap: { value: L.sssWrap },
@@ -253,8 +246,6 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
         uniform vec3 colDeep;
         uniform vec3 colDeepest;
         uniform vec3 colWall;
-        uniform vec3 colInflamed;
-        uniform float inflamedAmount;
         uniform float wetRoughness;
         uniform float dryRoughness;
         uniform float sssWrap;
@@ -287,13 +278,12 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
         float crease = vWoundSurf.z;
         float cut = vWoundSurf.w;
         float depth = clamp(-height, 0.0, 1.0);
-        float rise = clamp(height, 0.0, 1.0);
         vec2 np = vWoundLocal.xz * 900.0;
         float mottle = woundFbm(np);
         float fine = woundFbm(np * 3.1 + 5.0);
 
-        // Rim: the real skin, swollen and inflamed, most at the top of the lips.
-        vec3 rimCol = mix(skinAlbedo, colInflamed, inflamedAmount * smoothstep(0.0, 0.9, inward) * (0.55 + 0.45 * rise) * (0.8 + 0.4 * mottle));
+        // Rim: the real skin (its swelling shows by shape and light alone), faintly mottled.
+        vec3 rimCol = skinAlbedo * (0.94 + 0.08 * mottle);
         // Raw tissue on the lips' inner faces and the cut's walls, then blood in its depths.
         vec3 wallCol = colWall * (0.7 + 0.55 * mottle) * (0.9 + 0.2 * fine);
         vec3 deepCol = mix(colDeep, colDeepest, smoothstep(0.55, 1.0, depth) * (0.7 + 0.3 * fine));
@@ -343,16 +333,14 @@ export interface BruiseUniforms extends ConformUniforms {
   woundHalf: { value: THREE.Vector2 };
   skinRef: { value: THREE.Color };
   bruiseCol: { value: THREE.Color };
-  rednessCol: { value: THREE.Color };
   strength: { value: number };
 }
 
 /** The bruise and contact shadow around the wound. Colours are sRGB hex. */
 export const BRUISE_LOOK = {
-  /** Purple-blue bruise, and the inflamed red closer in. */
+  /** Purple-blue bruise. */
   bruise: '#7a5a8c',
-  redness: '#c0625a',
-  strength: 0.65,
+  strength: 0.5,
   /** How far beyond the wound the bruise spreads (multiples of its half-width). */
   spread: 2.4,
 } as const;
@@ -370,7 +358,6 @@ export function createBruiseMaterial(multiply: boolean): THREE.ShaderMaterial & 
     woundHalf: { value: new THREE.Vector2(0.008, 0.025) },
     skinRef: { value: new THREE.Color().fromArray(REF_SKIN_LINEAR) },
     bruiseCol: { value: srgb(B.bruise) },
-    rednessCol: { value: srgb(B.redness) },
     strength: { value: B.strength },
   };
   const material = new THREE.ShaderMaterial({
@@ -391,7 +378,6 @@ export function createBruiseMaterial(multiply: boolean): THREE.ShaderMaterial & 
       uniform vec2 woundHalf;
       uniform vec3 skinRef;
       uniform vec3 bruiseCol;
-      uniform vec3 rednessCol;
       uniform float strength;
       varying vec2 vLocal;
       ${NOISE_GLSL}
@@ -404,10 +390,9 @@ export function createBruiseMaterial(multiply: boolean): THREE.ShaderMaterial & 
         float blotch = woundFbm(vLocal * 90.0 + 3.0);
         float spread = ${B.spread.toFixed(2)} * (0.8 + 0.5 * blotch);
         float bruise = (1.0 - smoothstep(0.6, spread, d)) * (0.65 + 0.5 * mottle);
-        float red = 1.0 - smoothstep(0.8, 1.5, d);
         // Contact shadow just outside the swollen rim.
         float shadow = smoothstep(0.75, 1.0, d) * (1.0 - smoothstep(1.0, 1.35, d));
-        vec3 tint = mix(bruiseCol, rednessCol, red * 0.7);
+        vec3 tint = bruiseCol;
         float amount = clamp(bruise * strength, 0.0, 1.0) * opacity;
         vec3 factor = mix(vec3(1.0), clamp(tint / skinRef, 0.0, 1.0), amount);
         factor *= 1.0 - 0.22 * shadow * opacity;

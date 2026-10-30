@@ -1,6 +1,7 @@
 import { memo, useRef, type RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { createHandPose, type HandPose } from '../lib/handPose';
+import { PALM_SKIN_LIFT } from '../lib/palmModel';
 import { HandMeshView } from './HandMeshView';
 import { createSkinLighting, type SkinLighting } from '../lib/skinLighting';
 import type { TrackingState } from '../lib/tracking';
@@ -24,8 +25,11 @@ interface ARSceneProps {
   view?: 'camera' | 'mesh';
 }
 
-/** In the mesh view the wound sits on the model's palm, about this far above its bones. */
-const MESH_PALM_SURFACE = 0.016;
+/**
+ * In the mesh view the wound sits on the model's palm, about 1.6 cm above its
+ * bones; the palm surface already rises PALM_SKIN_LIFT above them.
+ */
+const MESH_PALM_SURFACE = 0.016 - PALM_SKIN_LIFT;
 
 /**
  * The camera picture and the wound in one canvas. Renders on demand: the
