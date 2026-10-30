@@ -71,21 +71,8 @@ export function createXRWoundMaterial(): XRWoundMaterial {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        '#include <common>\nattribute vec4 woundSurf;\nvarying vec4 vSurf;\nvarying vec2 vLocal;\nvarying vec3 vFlatNormal;',
-      )
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = woundSurf;\nvLocal = position.xz;')
-      .replace(
-        '#include <defaultnormal_vertex>',
-        `#include <defaultnormal_vertex>
-        // The palm's own normal here (model +Y, bent by the same skinning), for shading relative to a flat palm.
-        vec3 flatNormal = vec3(0.0, 1.0, 0.0);
-        #ifdef USE_SKINNING
-          flatNormal = (skinMatrix * vec4(flatNormal, 0.0)).xyz;
-        #endif
-        vFlatNormal = normalize(normalMatrix * flatNormal);`,
-      );
+      .replace('#include <common>', '#include <common>\nattribute vec4 woundSurf;\nvarying vec4 vSurf;\nvarying vec2 vLocal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = woundSurf;\nvLocal = position.xz;');
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
@@ -99,35 +86,14 @@ export function createXRWoundMaterial(): XRWoundMaterial {
         uniform vec3 sssTint;
         varying vec4 vSurf;
         varying vec2 vLocal;
-        varying vec3 vFlatNormal;
         float xwWet = 0.0;
         float xwRim = 0.0;
         float xwAO = 1.0;
-        // Skin-coloured share of this point (0 in the cut), and the light on its
-        // actual surface vs. on a flat palm at the same spot.
-        float xwSkin = 0.0;
-        vec3 xwShapeIrr = vec3(0.0);
-        vec3 xwFlatIrr = vec3(0.0);
         ${NOISE}`,
       )
       .replace(
         '#include <lights_physical_pars_fragment>',
-        THREE.ShaderChunk.lights_physical_pars_fragment
-          .replace(
-            'vec3 irradiance = dotNL * directLight.color;',
-            `vec3 irradiance = dotNL * directLight.color;
-            // Soft light on the skin-coloured lips (wrapped well round), so their slopes never go grey.
-            float softNL = saturate( ( dot( geometryNormal, directLight.direction ) + 0.9 ) / 1.9 );
-            xwShapeIrr += mix( dotNL, softNL, xwSkin ) * directLight.color;
-            xwFlatIrr += saturate( dot( normalize( vFlatNormal ), directLight.direction ) ) * directLight.color;`,
-          )
-          .replace(
-            'vec3 diffuse = irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - singleScattering - multiScattering );',
-            `vec3 diffuse = irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - singleScattering - multiScattering );
-            xwShapeIrr += irradiance;
-            xwFlatIrr += irradiance;`,
-          )
-          .replace(
+        THREE.ShaderChunk.lights_physical_pars_fragment.replace(
           'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );',
           `reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );
           // Fleshy rim: light wraps past the terminator, warm (fake subsurface scattering).
@@ -156,12 +122,9 @@ export function createXRWoundMaterial(): XRWoundMaterial {
         vec3 blood = mix(colBlood, colBloodDeep, smoothstep(0.5, 1.0, depth) * (0.7 + 0.3 * n2));
         col = mix(col, blood, smoothstep(0.25, 0.75, depth));
         diffuseColor.rgb = col;
-        // Real passthrough skin shows at the edge and everywhere near skin
-        // level, so no lit copy of the skin can form a grey ring round the wound.
-        diffuseColor.a *= smoothstep(0.0, 1.0, inward) * smoothstep(0.05, 0.45, rise + cut);
-        xwSkin = 1.0 - smoothstep(0.1, 0.8, cut);
+        // Real passthrough skin shows at the outermost vertices.
+        diffuseColor.a *= smoothstep(0.0, 1.0, inward);
         xwWet = smoothstep(0.3, 0.7, depth) * smoothstep(0.5, 0.9, cut);
-        // Darkening only in and right by the cut.
         xwAO = 1.0 - ${L.depthOcclusion.toFixed(2)} * pow(depth, 1.2) - 0.35 * crease * cut;`,
       )
       .replace(
@@ -181,15 +144,13 @@ export function createXRWoundMaterial(): XRWoundMaterial {
       .replace(
         '#include <opaque_fragment>',
         `{
-          // Skin-coloured parts: the skin tone itself, shaded only by how their
-          // shape catches the light compared with a flat palm.
-          vec3 shapeShade = xwShapeIrr / max(xwFlatIrr, vec3(1e-4));
-          outgoingLight = mix(outgoingLight, diffuseColor.rgb * shapeShade, xwSkin);
-          // The raw parts sit in passthrough: a little less saturation and contrast.
+          // The raw parts sit in passthrough: a little less saturation and
+          // contrast (not the skin-coloured rim, which it would grey).
+          float rawPart = smoothstep(0.1, 0.8, vSurf.w);
           float luma = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
           vec3 graded = mix(vec3(luma), outgoingLight, ${L.saturation.toFixed(2)});
           graded = (graded - 0.18) * ${L.contrast.toFixed(2)} + 0.18;
-          outgoingLight = mix(graded, outgoingLight, xwSkin);
+          outgoingLight = mix(outgoingLight, graded, rawPart);
           outgoingLight *= 1.0 + (xwHash(gl_FragCoord.xy) - 0.5) * ${(L.noise * 2).toFixed(3)};
           outgoingLight = max(outgoingLight, 0.0);
         }
