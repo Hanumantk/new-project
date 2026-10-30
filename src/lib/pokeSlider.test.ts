@@ -19,6 +19,6 @@ describe('pokeSliderValue', () => {
     expect(pokeSliderValue(mid, 0, 0.05, L)).toBeNull(); // hovering in front
     expect(pokeSliderValue(mid, 0, -0.05, L)).toBeNull(); // pushed far through
     expect(pokeSliderValue(mid, 0.1, 0, L)).toBeNull(); // above the panel
-    expect(pokeSliderValue(-0.1, 0, 0, L)).toBeNull(); // on the label, left of the track
+    expect(pokeSliderValue(L.trackStart - 0.04, 0, 0, L)).toBeNull(); // well past the left end
   });
 });

@@ -15,8 +15,8 @@ export interface PokeSliderLayout {
 export const HEADSET_SLIDER: PokeSliderLayout = {
   width: 0.2,
   height: 0.055,
-  trackStart: -0.035,
-  trackEnd: 0.045,
+  trackStart: -0.088,
+  trackEnd: 0.088,
   touchDepth: 0.02,
 };
 
