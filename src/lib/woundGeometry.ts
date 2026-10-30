@@ -16,7 +16,7 @@ const CUT_MARGIN = 0.0001;
  * boundary, not its lowest point.
  *
  * The result is in metres, wound-local: centred in x/z, skin level at y = 0,
- * long axis along z, 5 cm long; thickness scales with it (rim ≈ +1.9 mm,
+ * long axis along z, `length` long (default WOUND_LENGTH); thickness scales with it (rim ≈ +1.9 mm,
  * cut ≈ −1.9 mm). Per vertex it adds `woundSurf` (vec3):
  *   x: height, −1 (deepest cut) … 0 (skin level) … +1 (top of the rim)
  *   y: inwardness, 0 on the outer edge … 1 once EDGE_BLEND inside it
@@ -34,7 +34,7 @@ export interface WoundGeometryInfo {
   scale: number;
 }
 
-export function normaliseWound(source: THREE.BufferGeometry): WoundGeometryInfo {
+export function normaliseWound(source: THREE.BufferGeometry, length = WOUND_LENGTH): WoundGeometryInfo {
   const geometry = source.clone();
   // Only shape matters: the model's own UVs and material aren't used.
   geometry.deleteAttribute('uv');
@@ -114,7 +114,7 @@ export function normaliseWound(source: THREE.BufferGeometry): WoundGeometryInfo 
   }
   const cx = (minX + maxX) / 2;
   const cz = (minZ + maxZ) / 2;
-  const scale = WOUND_LENGTH / (maxZ - minZ);
+  const scale = length / (maxZ - minZ);
 
   let rim = 0, cut = 0;
   for (let w = 0; w < welded; w++) {
@@ -224,7 +224,7 @@ export function normaliseWound(source: THREE.BufferGeometry): WoundGeometryInfo 
     rimHeight: rim,
     cutDepth,
     halfWidth: ((maxX - minX) / 2) * scale,
-    halfLength: WOUND_LENGTH / 2,
+    halfLength: length / 2,
     scale,
   };
 }

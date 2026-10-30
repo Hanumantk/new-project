@@ -2,8 +2,7 @@ import { useEffect, useMemo, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/examples/jsm/webxr/XRHandModelFactory.js';
-import { JointPalmFitter } from '../lib/jointPalm';
-import { PALM_SKIN_LIFT } from '../lib/palmModel';
+import { xrPrefs } from '../lib/xrPrefs';
 import {
   CLOSED_HAND_SCORE,
   OPEN_HAND_SCORE,
@@ -53,8 +52,8 @@ interface XRPoseSourceProps {
 }
 
 /**
- * Feeds the headset's own hand tracking into a HandPose. The wound goes on
- * the right hand when it's tracked, otherwise on the left.
+ * Feeds the headset's own hand tracking into a HandPose: only the hand chosen
+ * on the in-headset panel (xrPrefs.hand).
  */
 export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
   const gl = useThree((s) => s.gl);
@@ -66,7 +65,6 @@ export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
       models: [] as THREE.Object3D[],
       handedness: new Map<HandSpace, XRHandedness>(),
       skinned: new WeakSet<THREE.Material>(),
-      palmFitter: new JointPalmFitter(),
     }),
     [],
   );
@@ -126,7 +124,7 @@ export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
       }
     }
 
-    const hand = pickHand(state.hands, state.handedness);
+    const hand = pickHand(state.hands, state.handedness, xrPrefs.hand);
     if (!hand) {
       out.tracked = false;
       out.palm.valid = false;
@@ -143,27 +141,22 @@ export function XRPoseSource({ pose, showHands }: XRPoseSourceProps) {
     }
 
     const palm = hand.joints['middle-finger-metacarpal'];
-    // The palm surface already sits PALM_SKIN_LIFT above the joints; make up the rest of the joint's radius.
-    out.surfaceOffset =
-      (palm?.jointRadius ?? DEFAULT_PALM_RADIUS) -
-      PALM_SKIN_LIFT * out.palm.scale +
-      (showHands ? MODEL_CLEARANCE : SKIN_CLEARANCE);
+    out.surfaceOffset = (palm?.jointRadius ?? DEFAULT_PALM_RADIUS) + (showHands ? MODEL_CLEARANCE : SKIN_CLEARANCE);
     out.isRightHand = state.handedness.get(hand) === 'right';
     out.open = opennessFromJoints(out.joints) > (out.open ? CLOSED_HAND_SCORE : OPEN_HAND_SCORE);
-    out.tracked = state.palmFitter.update(out.joints, out.isRightHand, out.palm);
+    // Metric joints straight from the runtime: no template fit, no rescaling.
+    out.tracked = true;
+    out.palm.valid = false;
     out.version++;
   }, -1);
 
   return null;
 }
 
-/** The tracked right hand if there is one, else the tracked left hand. */
-function pickHand(hands: HandSpace[], handedness: Map<HandSpace, XRHandedness>) {
-  let fallback: HandSpace | null = null;
+/** The chosen hand, if it's tracked (never the other one). */
+function pickHand(hands: HandSpace[], handedness: Map<HandSpace, XRHandedness>, side: XRHandedness) {
   for (const hand of hands) {
-    if (!handedness.has(hand) || !hand.joints.wrist?.visible) continue;
-    if (handedness.get(hand) === 'right') return hand;
-    fallback = hand;
+    if (handedness.get(hand) === side && hand.joints.wrist?.visible) return hand;
   }
-  return fallback;
+  return null;
 }
