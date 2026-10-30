@@ -16,6 +16,7 @@ const RELEASE = 0.03;
 type Target =
   | { kind: 'hand'; side: HandSide }
   | { kind: 'reattach' }
+  | { kind: 'mesh' }
   | { kind: 'skin'; index: number }
   | { kind: 'auto' }
   | { kind: 'fine' };
@@ -31,9 +32,10 @@ interface Region {
 
 // Layout (metres): row 1 hand + re-attach, row 2 skin swatches, row 3 fine tone.
 const REGIONS: Region[] = [
-  { target: { kind: 'hand', side: 'left' }, x0: -0.11, x1: -0.06, y0: 0.017, y1: 0.045 },
-  { target: { kind: 'hand', side: 'right' }, x0: -0.055, x1: -0.005, y0: 0.017, y1: 0.045 },
-  { target: { kind: 'reattach' }, x0: 0.02, x1: 0.11, y0: 0.017, y1: 0.045 },
+  { target: { kind: 'hand', side: 'left' }, x0: -0.11, x1: -0.065, y0: 0.017, y1: 0.045 },
+  { target: { kind: 'hand', side: 'right' }, x0: -0.06, x1: -0.015, y0: 0.017, y1: 0.045 },
+  { target: { kind: 'reattach' }, x0: -0.005, x1: 0.058, y0: 0.017, y1: 0.045 },
+  { target: { kind: 'mesh' }, x0: 0.063, x1: 0.11, y0: 0.017, y1: 0.045 },
   ...SKIN_PRESETS.map((_, index) => ({
     target: { kind: 'skin', index } as Target,
     x0: -0.11 + index * 0.031,
@@ -133,6 +135,7 @@ export function XRWoundPanel({ active }: { active: boolean }) {
       if (t.kind === 'hand') setXRPrefs({ hand: t.side });
       else if (t.kind === 'skin') setXRPrefs({ skinPreset: t.index, skinAuto: false });
       else if (t.kind === 'auto') setXRPrefs({ skinAuto: !xrPrefs.skinAuto });
+      else if (t.kind === 'mesh') setXRPrefs({ showHandMesh: !xrPrefs.showHandMesh });
       else {
         requestReattach();
         s.flash = 0.4;
@@ -212,13 +215,16 @@ function draw(canvas: HTMLCanvasElement, reattachFlash: boolean) {
       ctx.font = '600 44px "DM Sans", system-ui, sans-serif';
       continue;
     }
-    const selected = (t.kind === 'hand' && xrPrefs.hand === t.side) || (t.kind === 'reattach' && reattachFlash);
+    const selected =
+      (t.kind === 'hand' && xrPrefs.hand === t.side) ||
+      (t.kind === 'reattach' && reattachFlash) ||
+      (t.kind === 'mesh' && xrPrefs.showHandMesh);
     ctx.fillStyle = selected ? '#2f9e63' : '#e4e8e5';
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, 28);
     ctx.fill();
     ctx.fillStyle = selected ? '#ffffff' : '#1f2a24';
-    const label = t.kind === 'hand' ? (t.side === 'left' ? 'Left' : 'Right') : 'Re-attach';
+    const label = t.kind === 'hand' ? (t.side === 'left' ? 'Left' : 'Right') : t.kind === 'mesh' ? 'Mesh' : 'Re-attach';
     ctx.fillText(label, x + w / 2, y + h / 2 + 2);
   }
 }
