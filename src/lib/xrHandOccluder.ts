@@ -24,8 +24,11 @@ const PALM_OUTLINE: readonly XRHandJoint[] = [
   'pinky-finger-phalanx-proximal',
   'pinky-finger-metacarpal',
 ];
-/** The slab's top face sits this far below the skin (m), so it never covers the wound from the front… */
-const SLAB_BELOW_SKIN = 0.002;
+/**
+ * The slab's top face sits this far below the skin (m), so it never covers
+ * the wound from the front (its cut goes ~2.4 mm deep at 8.5 cm long)…
+ */
+const SLAB_BELOW_SKIN = 0.0035;
 /** …and it's this thick (m), so it hides the wound when the back of the hand faces you. */
 const SLAB_THICKNESS = 0.015;
 /** The outline is grown by this factor about its centre to reach the palm's edges. */
