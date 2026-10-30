@@ -2,7 +2,9 @@ import * as THREE from 'three';
 
 /** Thumb and finger bones as joint chains (each consecutive pair is a capsule). */
 const CHAINS: readonly (readonly XRHandJoint[])[] = [
-  ['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip'],
+  // The thumb from its first knuckle: its metacarpal sits inside the thumb's
+  // mound under the palm's skin, where a capsule would cut into the wound.
+  ['thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip'],
   ['index-finger-phalanx-proximal', 'index-finger-phalanx-intermediate', 'index-finger-phalanx-distal', 'index-finger-tip'],
   ['middle-finger-phalanx-proximal', 'middle-finger-phalanx-intermediate', 'middle-finger-phalanx-distal', 'middle-finger-tip'],
   ['ring-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal', 'ring-finger-tip'],
