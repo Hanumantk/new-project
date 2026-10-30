@@ -11,8 +11,11 @@ import { XRScene, type XRMode } from './XRScene';
 /** Used to drop the room to the floor when the runtime has no floor-level space. */
 const STANDING_EYE_HEIGHT = 1.6;
 
-/** Mixed reality also asks for what the material mat uses to find and stick to the table. */
-const MAT_FEATURES = ['plane-detection', 'anchors', 'hit-test'];
+/**
+ * Mixed reality also asks for what the material mat uses to find and stick to
+ * the table, and for the room's light (used for the wound if granted).
+ */
+const MAT_FEATURES = ['plane-detection', 'anchors', 'hit-test', 'light-estimation'];
 
 /** Asks for a session, retrying with fewer requirements if the first ask is refused. */
 async function requestSession(xr: XRSystem, mode: XRSessionMode): Promise<XRSession> {
@@ -169,6 +172,9 @@ export function XRView({ onExit }: XRViewProps) {
       renderer.xr.setReferenceSpaceType(floorLevel ? 'local-floor' : 'local');
       setFloorY(floorLevel ? 0 : -STANDING_EYE_HEIGHT);
       setMode(next);
+      // Full-resolution eye buffers, light foveation (Quest 3 holds 72+ fps with these).
+      renderer.xr.setFramebufferScaleFactor(1.0);
+      renderer.xr.setFoveation(0.3);
       await renderer.xr.setSession(session);
     } catch (err) {
       console.error(err);

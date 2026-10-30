@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
 import { XRHandOccluder } from '../lib/xrHandOccluder';
-import { xrPrefs, type HandSide } from '../lib/xrPrefs';
+import { SKIN_PRESETS, xrPrefs, type HandSide } from '../lib/xrPrefs';
+import { createXRDecalMaterial, createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
 
 const WOUND_URL = `${import.meta.env.BASE_URL}models/Wound.glb`;
 
@@ -16,6 +19,9 @@ export const ANGLE_DEG = 35;
 export const OFFSET_MM = 0.5;
 /** …and moved on the palm (mm): [towards the thumb, towards the fingers], from the metacarpals' centre (their joints sit at the base of the palm). */
 export const PALM_OFFSET_MM: readonly [number, number] = [0, 20];
+
+/** The bruise halo's size (cm): across, along the wound. */
+const BRUISE_SIZE_CM: readonly [number, number] = [4, 7];
 
 /** After the hand is lost the wound stays put this long (s)… */
 const HOLD_SECONDS = 0.5;
@@ -99,14 +105,15 @@ class PalmFrameReader {
 /** Tracks which hand space is which hand (they connect in any order). */
 function useHandSpaces() {
   const gl = useThree((s) => s.gl);
-  const handedness = useMemo(() => new Map<THREE.XRHandSpace, XRHandedness>(), []);
+  // Slot per hand space: its handedness while connected (no per-frame allocation to look up).
+  const slots = useMemo(() => [null, null] as (XRHandedness | null)[], []);
   useEffect(() => {
-    const hands = [gl.xr.getHand(0), gl.xr.getHand(1)];
-    const offs = hands.map((hand) => {
+    const offs = [0, 1].map((i) => {
+      const hand = gl.xr.getHand(i);
       const onConnected = (event: { data: XRInputSource }) => {
-        if (event.data.hand) handedness.set(hand, event.data.handedness);
+        if (event.data.hand) slots[i] = event.data.handedness;
       };
-      const onDisconnected = () => handedness.delete(hand);
+      const onDisconnected = () => (slots[i] = null);
       hand.addEventListener('connected', onConnected);
       hand.addEventListener('disconnected', onDisconnected);
       return () => {
@@ -115,9 +122,9 @@ function useHandSpaces() {
       };
     });
     return () => offs.forEach((off) => off());
-  }, [gl, handedness]);
+  }, [gl, slots]);
   return (side: HandSide): THREE.XRHandSpace | null => {
-    for (const [hand, h] of handedness) if (h === side) return hand;
+    for (let i = 0; i < 2; i++) if (slots[i] === side) return gl.xr.getHand(i);
     return null;
   };
 }
@@ -184,18 +191,9 @@ function computeSkinWeights(mesh: THREE.Mesh, bones: THREE.Bone[]) {
 export function XRWound({ strength }: XRWoundProps) {
   const findHand = useHandSpaces();
   const [info, setInfo] = useState<WoundGeometryInfo | null>(null);
-  const material = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: '#8b1a1a',
-        transparent: true,
-        // Always wins over the palm slab just below it.
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -4,
-      }),
-    [],
-  );
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const material = useMemo(() => createXRWoundMaterial(), []);
   // Real fingers cover the wound; the back of the hand hides it.
   const occluder = useMemo(() => new XRHandOccluder(), []);
   useEffect(() => () => occluder.dispose(), [occluder]);
@@ -224,6 +222,49 @@ export function XRWound({ strength }: XRWoundProps) {
   }, []);
   useEffect(() => () => material.dispose(), [material]);
 
+  // Soft studio reflections for the wet blood (or the room's own, if the
+  // session estimates the real light).
+  useEffect(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const room = new RoomEnvironment();
+    const envMap = pmrem.fromScene(room, 0.04).texture;
+    material.envMap = envMap;
+    material.needsUpdate = true;
+    room.dispose();
+    pmrem.dispose();
+
+    const estimated = new XREstimatedLight(gl);
+    const ownLights: THREE.Light[] = [];
+    const onStart = () => {
+      // The real room's light replaces the scene's fixed lights.
+      scene.traverse((o) => {
+        if ((o as THREE.Light).isLight && o.visible) ownLights.push(o as THREE.Light);
+      });
+      ownLights.forEach((light) => (light.visible = false));
+      scene.add(estimated);
+      if (estimated.environment) {
+        material.envMap = estimated.environment;
+        material.needsUpdate = true;
+      }
+    };
+    const onEnd = () => {
+      scene.remove(estimated);
+      ownLights.forEach((light) => (light.visible = true));
+      ownLights.length = 0;
+      material.envMap = envMap;
+      material.needsUpdate = true;
+    };
+    estimated.addEventListener('estimationstart', onStart);
+    estimated.addEventListener('estimationend', onEnd);
+    return () => {
+      estimated.removeEventListener('estimationstart', onStart);
+      estimated.removeEventListener('estimationend', onEnd);
+      onEnd();
+      estimated.dispose();
+      envMap.dispose();
+    };
+  }, [gl, scene, material]);
+
   // Six bones under a root at the scene origin; their world matrices are set
   // straight from the joints each frame.
   const rig = useMemo(() => {
@@ -240,16 +281,52 @@ export function XRWound({ strength }: XRWoundProps) {
     return { root, bones };
   }, []);
 
-  // The wound mesh, parented to the scene (never to the hand).
-  const mesh = useMemo(() => {
+  // The wound and its decals (bruise, contact shadow), parented to the scene (never to the hand).
+  const parts = useMemo(() => {
     if (!info) return null;
-    const m = USE_SKINNING ? new THREE.SkinnedMesh(info.geometry, material) : new THREE.Mesh(info.geometry, material);
-    if (m instanceof THREE.SkinnedMesh) m.bind(new THREE.Skeleton(rig.bones), new THREE.Matrix4());
-    m.frustumCulled = false;
-    m.renderOrder = 3;
-    m.visible = false;
-    return m;
+    const make = (geometry: THREE.BufferGeometry, m: THREE.Material, order: number, lift: number) => {
+      const o = USE_SKINNING ? new THREE.SkinnedMesh(geometry, m) : new THREE.Mesh(geometry, m);
+      if (o instanceof THREE.SkinnedMesh) o.bind(new THREE.Skeleton(rig.bones), new THREE.Matrix4());
+      o.frustumCulled = false;
+      o.renderOrder = order;
+      o.visible = false;
+      o.userData.lift = lift;
+      return o;
+    };
+    const decal = (width: number, length: number) => {
+      const g = new THREE.PlaneGeometry(width, length, 24, 40).rotateX(-Math.PI / 2);
+      addSkinAttributes(g);
+      return g;
+    };
+    const { halfWidth, halfLength } = info;
+    const bruiseHalf = new THREE.Vector2(BRUISE_SIZE_CM[0] / 200, BRUISE_SIZE_CM[1] / 200);
+    const bruise = make(
+      decal(bruiseHalf.x * 2, bruiseHalf.y * 2),
+      createXRDecalMaterial('bruise', halfWidth, halfLength, bruiseHalf),
+      1,
+      0.0002,
+    );
+    const shadowHalf = new THREE.Vector2(halfWidth * 2.2, halfLength + halfWidth * 1.4);
+    const shadow = make(
+      decal(shadowHalf.x * 2, shadowHalf.y * 2),
+      createXRDecalMaterial('shadow', halfWidth, halfLength, shadowHalf),
+      2,
+      0.0003,
+    );
+    const wound = make(info.geometry, material, 3, 0);
+    return { wound, all: [bruise, shadow, wound] };
   }, [info, material, rig]);
+  useEffect(
+    () => () =>
+      parts?.all.forEach((o) => {
+        if (o !== parts.wound) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      }),
+    [parts],
+  );
+  const mesh = parts?.wound ?? null;
 
   const state = useMemo(
     () => ({
@@ -259,7 +336,10 @@ export function XRWound({ strength }: XRWoundProps) {
       lostFor: Infinity,
       boundHand: null as HandSide | null,
       boundReattach: -1,
+      skinVersion: -1,
       one: new THREE.Vector3(1, 1, 1),
+      lifted: new THREE.Vector3(),
+      up: new THREE.Vector3(),
     }),
     [],
   );
@@ -269,7 +349,11 @@ export function XRWound({ strength }: XRWoundProps) {
   }, [state, mesh, rig, findHand, occluder]);
 
   useFrame((_, delta) => {
-    if (!mesh) return;
+    if (!mesh || !parts) return;
+    if (state.skinVersion !== xrPrefs.version) {
+      state.skinVersion = xrPrefs.version;
+      skinToneColor(SKIN_PRESETS[xrPrefs.skinPreset], xrPrefs.skinFine, material.userData.uniforms.skinTone.value);
+    }
     const hand = findHand(xrPrefs.hand);
     // Joints are all-or-nothing: the wrist stands for the whole hand.
     const tracked = !!hand?.joints.wrist?.visible && state.reader.read(hand, state.frame);
@@ -283,13 +367,12 @@ export function XRWound({ strength }: XRWoundProps) {
         }
         // Bind on the first frame, on Re-attach, and when the hand changes.
         if (!state.placed || state.boundHand !== xrPrefs.hand || state.boundReattach !== xrPrefs.reattach) {
-          bind(mesh as THREE.SkinnedMesh);
+          bind();
           state.boundHand = xrPrefs.hand;
           state.boundReattach = xrPrefs.reattach;
         }
       } else {
-        mesh.position.copy(state.frame.point);
-        mesh.quaternion.copy(state.frame.quaternion);
+        for (const o of parts.all) place(o);
       }
       occluder.update(hand, state.reader.skin, state.reader.normal);
       state.placed = true;
@@ -299,28 +382,40 @@ export function XRWound({ strength }: XRWoundProps) {
     }
     const fade = state.lostFor <= HOLD_SECONDS ? 1 : 1 - (state.lostFor - HOLD_SECONDS) / FADE_SECONDS;
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;
-    material.opacity = opacity;
-    mesh.visible = opacity > 0;
+    for (const o of parts.all) {
+      (o.material as THREE.Material).opacity = opacity;
+      o.visible = opacity > 0;
+    }
     occluder.root.visible = mesh.visible;
   });
 
-  /** Puts the wound on the palm surface and binds it to the bones as they are this frame. */
-  function bind(skinned: THREE.SkinnedMesh) {
-    skinned.position.copy(state.frame.point);
-    skinned.quaternion.copy(state.frame.quaternion);
-    skinned.updateMatrixWorld(true);
-    computeSkinWeights(skinned, rig.bones);
+  /** Puts a part on the palm surface (decals a hair above it) as the palm frame says this frame. */
+  function place(o: THREE.Object3D) {
+    state.up.set(0, 1, 0).applyQuaternion(state.frame.quaternion);
+    o.position.copy(state.frame.point).addScaledVector(state.up, o.userData.lift as number);
+    o.quaternion.copy(state.frame.quaternion);
+    o.updateMatrixWorld(true);
+  }
+
+  /** Puts the wound and decals on the palm surface and binds them to the bones as they are this frame. */
+  function bind() {
     // A new skeleton, so its inverses capture this exact pose.
-    const old = skinned.skeleton;
-    skinned.bind(new THREE.Skeleton(rig.bones), skinned.matrixWorld);
-    old?.dispose();
+    const skeleton = new THREE.Skeleton(rig.bones);
+    for (const o of parts!.all) {
+      const skinned = o as THREE.SkinnedMesh;
+      place(skinned);
+      computeSkinWeights(skinned, rig.bones);
+      const old = skinned.skeleton;
+      skinned.bind(skeleton, skinned.matrixWorld);
+      if (old !== skeleton) old?.dispose();
+    }
   }
 
   return (
     <>
       <primitive object={rig.root} />
       <primitive object={occluder.root} />
-      {mesh && <primitive object={mesh} />}
+      {parts?.all.map((o) => <primitive key={o.uuid} object={o} />)}
     </>
   );
 }
