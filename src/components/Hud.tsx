@@ -21,7 +21,28 @@ export interface HudStats {
   backgroundFrameId: number;
   /** Renders where the pose and the background came from different frames. */
   mismatches: number;
+  /**
+   * Wound jitter: RMS movement of its centre over the last second (video px,
+   * drift removed), as drawn and of the unfiltered pose, while the hand is
+   * roughly still (null while it moves).
+   */
+  jitterPx: number | null;
+  rawJitterPx: number | null;
 }
+
+/** Debug overlays that can be switched on and off one by one. */
+export type DebugLayer = 'landmarks' | 'surface' | 'box' | 'jitter';
+export type DebugLayers = Record<DebugLayer, boolean>;
+export const ALL_DEBUG_LAYERS: DebugLayers = { landmarks: true, surface: true, box: true, jitter: true };
+const DEBUG_LAYER_LABEL: Record<DebugLayer, string> = {
+  landmarks: 'Landmarks',
+  surface: 'Palm surface',
+  box: 'Wound box',
+  jitter: 'Jitter',
+};
+
+/** Target for the wound's jitter with the hand at rest. */
+const JITTER_TARGET_PX = 0.5;
 
 interface HudProps {
   handStatus: HandStatus;
@@ -31,6 +52,8 @@ interface HudProps {
   source: string | null;
   debug: boolean;
   onToggleDebug: () => void;
+  debugLayers: DebugLayers;
+  onToggleDebugLayer: (layer: DebugLayer) => void;
   /** Wound opacity, 0..1. */
   woundOpacity: number;
   onWoundOpacityChange: (value: number) => void;
@@ -47,6 +70,8 @@ export function Hud({
   source,
   debug,
   onToggleDebug,
+  debugLayers,
+  onToggleDebugLayer,
   woundOpacity,
   onWoundOpacityChange,
   view,
@@ -81,6 +106,26 @@ export function Hud({
           <span className={stats.mismatches ? 'hud-bad' : 'hud-good'}>
             {stats.mismatches ? `${stats.mismatches} out of sync` : 'in sync'}
           </span>
+          {debugLayers.jitter && (
+            <span
+              className={stats.jitterPx == null ? undefined : stats.jitterPx < JITTER_TARGET_PX ? 'hud-good' : 'hud-bad'}
+              title="Wound centre, RMS over the last second with the hand still (unfiltered pose in brackets)"
+            >
+              jitter{' '}
+              <strong>{stats.jitterPx == null ? 'moving' : `${stats.jitterPx.toFixed(2)} px`}</strong>
+              {stats.rawJitterPx != null && ` (raw ${stats.rawJitterPx.toFixed(2)})`}
+            </span>
+          )}
+        </div>
+      )}
+      {debug && (
+        <div className="panel hud-debug hud-debug-layers" role="group" aria-label="Debug overlays">
+          {(Object.keys(DEBUG_LAYER_LABEL) as DebugLayer[]).map((layer) => (
+            <label key={layer}>
+              <input type="checkbox" checked={debugLayers[layer]} onChange={() => onToggleDebugLayer(layer)} />
+              {DEBUG_LAYER_LABEL[layer]}
+            </label>
+          ))}
         </div>
       )}
       <div className="panel hud-segmented" role="radiogroup" aria-label="View">

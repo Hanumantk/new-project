@@ -4,7 +4,7 @@ import { createHandPose, type HandPose } from '../lib/handPose';
 import { HandMeshView } from './HandMeshView';
 import { createSkinLighting, type SkinLighting } from '../lib/skinLighting';
 import type { TrackingState } from '../lib/tracking';
-import { PalmInjury } from './PalmInjury';
+import { WoundModel } from './WoundModel';
 import { VideoBackground } from './VideoBackground';
 import { WebcamCompositor } from './WebcamCompositor';
 import { WebcamPoseSource } from './WebcamPoseSource';
@@ -13,8 +13,11 @@ interface ARSceneProps {
   tracking: RefObject<TrackingState>;
   /** Receives the function that requests a render; called once per detected frame. */
   onReady: (invalidate: () => void) => void;
-  /** Show the palm grid as a wireframe. */
+  /** Debug mode (draws the debug layer)… */
   debug?: boolean;
+  /** …with the palm surface as a wireframe, and the wound's bounding box. */
+  debugSurface?: boolean;
+  debugBox?: boolean;
   /** Wound opacity set in the HUD, 0..1. */
   woundOpacity: RefObject<number>;
   /** 'camera': the real picture; 'mesh': the hand as a grayscale mesh on a plain backdrop. */
@@ -34,6 +37,8 @@ export const ARScene = memo(function ARScene({
   tracking,
   onReady,
   debug = false,
+  debugSurface = false,
+  debugBox = false,
   woundOpacity,
   view = 'camera',
 }: ARSceneProps) {
@@ -51,12 +56,13 @@ export const ARScene = memo(function ARScene({
       <WebcamPoseSource tracking={tracking} pose={pose} surfaceOffset={meshView ? MESH_PALM_SURFACE : 0} />
       <VideoBackground tracking={tracking} pose={pose} plain={meshView} />
       <HandMeshView pose={pose} visible={meshView} />
-      <PalmInjury
+      <WoundModel
         pose={pose}
         composite
         lighting={meshView ? undefined : lighting}
         strength={woundOpacity}
-        debug={debug}
+        debugSurface={debugSurface}
+        debugBox={debugBox}
       />
       <WebcamCompositor tracking={tracking} lighting={lighting} debug={debug} matchCamera={!meshView} />
     </Canvas>

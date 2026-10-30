@@ -1,5 +1,7 @@
+import * as THREE from 'three';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { createSkinSample, type SkinSample } from './skinSampler';
+import { createCameraPalm, type CameraPalm } from './webcamPalm';
 
 /**
  * Mutable state shared between the detection loop and the 3D scene.
@@ -12,14 +14,29 @@ export interface TrackingState {
    * and the picture behind it always come from one frame.
    */
   frame: HTMLCanvasElement | null;
-  /** Landmarks of the tracked hand in `frame` (One Euro filtered), or null if none. */
+  /**
+   * Landmarks of the tracked hand in `frame` (One Euro filtered, for drawing
+   * and skin sampling), or null if none.
+   */
   landmarks: NormalizedLandmark[] | null;
+  /** The palm's rigid, filtered pose in camera space (what the wound is glued to). */
+  palm: CameraPalm;
+  /** All 21 joints in camera space, at the palm's depth (for occlusion and the mesh view). */
+  joints: THREE.Vector3[];
+  /**
+   * Jitter meter: RMS movement (video px) of the wound's centre over the last
+   * second, drift removed — as drawn, and of the unfiltered pose for comparison —
+   * and how fast the hand is moving (px/s).
+   */
+  jitter: { px: number; rawPx: number; speed: number };
   /** The user's actual hand (not MediaPipe's mirrored label). */
   isRightHand: boolean;
   /** True while the hand is open (a closed hand covers the palm). */
   handOpen: boolean;
   /** Increments every time a new video frame has been captured and processed. */
   frameId: number;
+  /** When that frame was captured (s, on the video's clock). */
+  mediaTime: number;
   /** The real skin around the wound: colour, brightness and camera noise. */
   skin: SkinSample;
   /** Which frame the background and the wound pose were last rendered from. */
@@ -30,9 +47,13 @@ export function createTrackingState(): TrackingState {
   return {
     frame: null,
     landmarks: null,
+    palm: createCameraPalm(),
+    joints: Array.from({ length: 21 }, () => new THREE.Vector3()),
+    jitter: { px: 0, rawPx: 0, speed: 0 },
     isRightHand: true,
     handOpen: false,
     frameId: 0,
+    mediaTime: 0,
     skin: createSkinSample(),
     rendered: { backgroundFrameId: -1, poseFrameId: -1, mismatches: 0, renders: 0 },
   };

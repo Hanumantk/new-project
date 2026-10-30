@@ -9,7 +9,7 @@ import { MaterialMat } from '../mat/MaterialMat';
 import type { MatSystem } from '../mat/xr/MatSystem';
 import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
 import type { HandStatus } from './Hud';
-import { PalmInjury } from './PalmInjury';
+import { WoundModel } from './WoundModel';
 import { XRPoseSource } from './XRPoseSource';
 
 export type XRMode = 'ar' | 'vr';
@@ -63,7 +63,7 @@ export const XRScene = memo(function XRScene({
       <hemisphereLight args={['#ffffff', '#c9cfc7', 0.8]} />
       <directionalLight position={[0.6, 2.2, 0.8]} intensity={1} />
       <XRPoseSource pose={pose} showHands={isVR} />
-      <PalmInjury pose={pose} occlude={!isVR} strength={woundOpacity} />
+      <WoundModel pose={pose} occlude={!isVR} strength={woundOpacity} />
       <HintPanel pose={pose} active={mode !== null} />
       <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} grab={grab} />
       <StatusReporter pose={pose} onHandStatus={onHandStatus} />
