@@ -5,7 +5,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
-import { XRHandOccluder } from '../lib/xrHandOccluder';
+import { XRHandModel, prepareHandModel } from '../lib/xrHandModel';
+import { conformWound } from '../lib/xrWoundConform';
 import { SKIN_PRESETS, setAutoWorking, xrPrefs, type HandSide } from '../lib/xrPrefs';
 import { XRSkinSampler } from '../lib/xrSkinSampler';
 import { createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
@@ -136,13 +137,10 @@ interface XRWoundProps {
   strength: RefObject<number>;
 }
 
-/** Bend the wound with the palm (skinned to six hand bones); false: rigid on the palm frame. */
+/** Fix the wound to the hand model's skin (it then deforms with the hand); false: rigid on the palm frame. */
 export const USE_SKINNING = true;
 
-/** The joints the wound is skinned to. */
-const BONE_JOINTS = ['wrist', 'thumb-metacarpal', ...METACARPALS] as const;
-/** Bones each vertex follows. */
-const INFLUENCES = 4;
+const HAND_URL = `${import.meta.env.BASE_URL}models/Hand.glb`;
 
 /** Adds (empty) skin index/weight attributes, filled at each bind. */
 function addSkinAttributes(geometry: THREE.BufferGeometry) {
@@ -151,54 +149,22 @@ function addSkinAttributes(geometry: THREE.BufferGeometry) {
   geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(new Float32Array(n * 4), 4));
 }
 
-const weightScratch = { p: new THREE.Vector3(), d: new Float64Array(BONE_JOINTS.length), order: [0, 1, 2, 3, 4, 5] };
-
 /**
- * Skin weights for a mesh as it sits now (its matrixWorld) against the bones
- * as they are now: each vertex to its 4 nearest bones, by 1/distance², normalised.
- */
-function computeSkinWeights(mesh: THREE.Mesh, bones: THREE.Bone[]) {
-  const geometry = mesh.geometry;
-  const pos = geometry.getAttribute('position');
-  const index = geometry.getAttribute('skinIndex') as THREE.BufferAttribute;
-  const weight = geometry.getAttribute('skinWeight') as THREE.BufferAttribute;
-  const { p, d, order } = weightScratch;
-  for (let i = 0; i < pos.count; i++) {
-    p.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
-    for (let b = 0; b < bones.length; b++) {
-      const e = bones[b].matrixWorld.elements;
-      d[b] = (p.x - e[12]) ** 2 + (p.y - e[13]) ** 2 + (p.z - e[14]) ** 2;
-      order[b] = b;
-    }
-    order.sort((a, b) => d[a] - d[b]);
-    let sum = 0;
-    for (let k = 0; k < INFLUENCES; k++) sum += 1 / Math.max(d[order[k]], 1e-8);
-    for (let k = 0; k < INFLUENCES; k++) {
-      index.setComponent(i, k, order[k]);
-      weight.setComponent(i, k, 1 / Math.max(d[order[k]], 1e-8) / sum);
-    }
-  }
-  index.needsUpdate = true;
-  weight.needsUpdate = true;
-}
-
-/**
- * The wound in the headset: on the chosen hand only, driven by that hand's
- * joints in the same frame they're read (no smoothing: the runtime already
- * predicts poses). It's skinned to six bones that copy the wrist, thumb and
- * metacarpal joints every frame, so it moves and bends with the palm. Never
- * hidden while the hand is tracked; when it's lost the wound stays where it
- * was for 0.5 s, then fades, and reappears at once at the new pose.
+ * The wound in the headset: on the chosen hand only. A detailed hand model is
+ * posed on that hand's joints every frame (no smoothing: the runtime already
+ * predicts poses); the wound is laid onto the model's palm skin and skinned
+ * with the model's own weights, so it stays on that skin as the hand moves and
+ * bends. The model, drawn depth-only, hides the wound behind the real hand.
+ * When the hand is lost the wound stays put for 0.5 s, then fades, and
+ * reappears at once at the new pose.
  */
 export function XRWound({ strength }: XRWoundProps) {
   const findHand = useHandSpaces();
   const [info, setInfo] = useState<WoundGeometryInfo | null>(null);
+  const [handSource, setHandSource] = useState<THREE.SkinnedMesh | null>(null);
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   const material = useMemo(() => createXRWoundMaterial(), []);
-  // Real fingers cover the wound; the back of the hand hides it.
-  const occluder = useMemo(() => new XRHandOccluder(), []);
-  useEffect(() => () => occluder.dispose(), [occluder]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,15 +180,41 @@ export function XRWound({ strength }: XRWoundProps) {
         loaded = normaliseWound(geometry, LENGTH_CM / 100);
         (geometry as THREE.BufferGeometry).dispose();
         addSkinAttributes(loaded.geometry);
+        // The flat wound as loaded, kept to lay it onto the hand afresh at each bind.
+        loaded.geometry.userData.restPositions = (loaded.geometry.getAttribute('position').array as Float32Array).slice();
+        loaded.geometry.userData.restNormals = (loaded.geometry.getAttribute('normal').array as Float32Array).slice();
         setInfo(loaded);
       })
       .catch((error) => console.error('Could not load the wound model', error));
+    new GLTFLoader()
+      .loadAsync(HAND_URL)
+      .then((gltf) => {
+        let mesh: THREE.SkinnedMesh | null = null;
+        gltf.scene.traverse((o) => {
+          if (!mesh && (o as THREE.SkinnedMesh).isSkinnedMesh) mesh = o as THREE.SkinnedMesh;
+        });
+        if (!cancelled) setHandSource(mesh);
+      })
+      .catch((error) => console.error('Could not load the hand model', error));
     return () => {
       cancelled = true;
       loaded?.geometry.dispose();
     };
   }, []);
   useEffect(() => () => material.dispose(), [material]);
+
+  // The hand model, as a left and a right hand.
+  const hands = useMemo(() => {
+    if (!handSource) return null;
+    return { left: new XRHandModel(prepareHandModel(handSource, false)), right: new XRHandModel(prepareHandModel(handSource, true)) };
+  }, [handSource]);
+  useEffect(
+    () => () => {
+      hands?.left.dispose();
+      hands?.right.dispose();
+    },
+    [hands],
+  );
 
   // Soft studio reflections for the wet blood (or the room's own, if the
   // session estimates the real light).
@@ -267,48 +259,28 @@ export function XRWound({ strength }: XRWoundProps) {
     };
   }, [gl, scene, material]);
 
-  // Six bones under a root at the scene origin; their world matrices are set
-  // straight from the joints each frame.
-  const rig = useMemo(() => {
-    const root = new THREE.Object3D();
-    root.matrixAutoUpdate = false;
-    const bones = BONE_JOINTS.map((name) => {
-      const bone = new THREE.Bone();
-      bone.name = name;
-      bone.matrixAutoUpdate = false;
-      bone.matrixWorldAutoUpdate = false;
-      root.add(bone);
-      return bone;
-    });
-    return { root, bones };
-  }, []);
-
-  // The wound, parented to the scene (never to the hand). No decals around
-  // it: nothing draws a border or halo on the skin.
-  const parts = useMemo(() => {
+  // The wound, parented to the scene (never to the hand).
+  const mesh = useMemo(() => {
     if (!info) return null;
     const o = USE_SKINNING ? new THREE.SkinnedMesh(info.geometry, material) : new THREE.Mesh(info.geometry, material);
-    if (o instanceof THREE.SkinnedMesh) o.bind(new THREE.Skeleton(rig.bones), new THREE.Matrix4());
     o.frustumCulled = false;
     o.renderOrder = 3;
     o.visible = false;
-    o.userData.lift = 0;
-    return { wound: o, all: [o] };
-  }, [info, material, rig]);
-  const mesh = parts?.wound ?? null;
+    return o;
+  }, [info, material]);
 
   const state = useMemo(
     () => ({
       reader: new PalmFrameReader(),
       frame: { point: new THREE.Vector3(), quaternion: new THREE.Quaternion() } as PalmFrame,
       placed: false,
+      bound: false,
       lostFor: Infinity,
       boundHand: null as HandSide | null,
       boundReattach: -1,
       skinVersion: -1,
-      one: new THREE.Vector3(1, 1, 1),
-      lifted: new THREE.Vector3(),
-      up: new THREE.Vector3(),
+      toWound: new THREE.Matrix4(),
+      surface: null as Float32Array | null,
       sampler: new XRSkinSampler(),
       sampleIn: 0,
       samplePoints: [0, 1, 2, 3, 4].map(() => new THREE.Vector3()),
@@ -317,38 +289,37 @@ export function XRWound({ strength }: XRWoundProps) {
   );
 
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, rig, findHand, occluder };
-  }, [state, mesh, rig, findHand, occluder]);
+    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, hands, findHand, prefs: xrPrefs, scene };
+  }, [state, mesh, hands, findHand, scene]);
 
   useFrame((_, delta) => {
-    if (!mesh || !parts) return;
+    if (!mesh || !hands) return;
     if (state.skinVersion !== xrPrefs.version) {
       state.skinVersion = xrPrefs.version;
       if (!(xrPrefs.skinAuto && xrPrefs.autoWorking)) {
         skinToneColor(SKIN_PRESETS[xrPrefs.skinPreset], xrPrefs.skinFine, material.userData.uniforms.skinTone.value);
       }
     }
+    const model = xrPrefs.hand === 'left' ? hands.left : hands.right;
+    const other = model === hands.left ? hands.right : hands.left;
+    other.root.visible = false;
     const hand = findHand(xrPrefs.hand);
     // Joints are all-or-nothing: the wrist stands for the whole hand.
-    const tracked = !!hand?.joints.wrist?.visible && state.reader.read(hand, state.frame);
+    const tracked = !!hand?.joints.wrist?.visible && state.reader.read(hand, state.frame) && model.update(hand);
     if (tracked) {
       if (USE_SKINNING) {
-        // Bones = this frame's joints, as is (also straight after a loss: no blending).
-        for (const bone of rig.bones) {
-          const joint = hand.joints[bone.name as XRHandJoint]!;
-          bone.matrix.compose(joint.position, joint.quaternion, state.one);
-          bone.matrixWorld.copy(bone.matrix);
-        }
-        // Bind on the first frame, on Re-attach, and when the hand changes.
-        if (!state.placed || state.boundHand !== xrPrefs.hand || state.boundReattach !== xrPrefs.reattach) {
-          bind();
+        // Lay the wound on the model's palm on the first frame, on Re-attach, and when the hand changes.
+        if (!state.bound || state.boundHand !== xrPrefs.hand || state.boundReattach !== xrPrefs.reattach) {
+          state.bound = bind(mesh as unknown as THREE.SkinnedMesh, model);
           state.boundHand = xrPrefs.hand;
           state.boundReattach = xrPrefs.reattach;
         }
       } else {
-        for (const o of parts.all) place(o);
+        mesh.position.copy(state.frame.point);
+        mesh.quaternion.copy(state.frame.quaternion);
       }
-      occluder.update(hand, state.reader.skin, state.reader.normal);
+      state.placed = state.bound || !USE_SKINNING;
+      state.lostFor = 0;
       // Auto skin tone: the real palm's colour from the camera, if the session allows it.
       state.sampleIn -= delta;
       if (xrPrefs.skinAuto && state.sampleIn <= 0) {
@@ -368,47 +339,60 @@ export function XRWound({ strength }: XRWoundProps) {
           setAutoWorking(false);
         }
       }
-      state.placed = true;
-      state.lostFor = 0;
     } else {
       state.lostFor += delta;
     }
     const fade = state.lostFor <= HOLD_SECONDS ? 1 : 1 - (state.lostFor - HOLD_SECONDS) / FADE_SECONDS;
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;
-    for (const o of parts.all) {
-      (o.material as THREE.Material).opacity = opacity;
-      o.visible = opacity > 0;
-    }
-    occluder.root.visible = mesh.visible;
+    material.opacity = opacity;
+    mesh.visible = opacity > 0;
+    // The hand model: hides the wound behind the real hand; its wireframe on request.
+    model.root.visible = mesh.visible || (xrPrefs.showHandMesh && tracked);
+    model.occluder.visible = mesh.visible;
+    model.wire.visible = xrPrefs.showHandMesh;
   });
 
-  /** Puts a part on the palm surface (decals a hair above it) as the palm frame says this frame. */
-  function place(o: THREE.Object3D) {
-    state.up.set(0, 1, 0).applyQuaternion(state.frame.quaternion);
-    o.position.copy(state.frame.point).addScaledVector(state.up, o.userData.lift as number);
-    o.quaternion.copy(state.frame.quaternion);
-    o.updateMatrixWorld(true);
-  }
-
-  /** Puts the wound and decals on the palm surface and binds them to the bones as they are this frame. */
-  function bind() {
-    // A new skeleton, so its inverses capture this exact pose.
-    const skeleton = new THREE.Skeleton(rig.bones);
-    for (const o of parts!.all) {
-      const skinned = o as THREE.SkinnedMesh;
-      place(skinned);
-      computeSkinWeights(skinned, rig.bones);
-      const old = skinned.skeleton;
-      skinned.bind(skeleton, skinned.matrixWorld);
-      if (old !== skeleton) old?.dispose();
-    }
+  /** Lays the wound onto the hand model's palm skin as it is this frame and binds it to the model's bones. */
+  function bind(skinned: THREE.SkinnedMesh, model: XRHandModel): boolean {
+    skinned.position.copy(state.frame.point);
+    skinned.quaternion.copy(state.frame.quaternion);
+    skinned.updateMatrixWorld(true);
+    const handGeometry = model.data.geometry;
+    const count = handGeometry.getAttribute('position').count;
+    if (!state.surface || state.surface.length !== count * 3) state.surface = new Float32Array(count * 3);
+    model.skinnedPositions(state.surface);
+    state.toWound.copy(skinned.matrixWorld).invert();
+    const g = skinned.geometry;
+    const ok = conformWound(
+      {
+        restPositions: g.userData.restPositions as Float32Array,
+        restNormals: g.userData.restNormals as Float32Array,
+        halfWidth: info!.halfWidth,
+        halfLength: info!.halfLength,
+      },
+      {
+        positions: state.surface,
+        index: handGeometry.getIndex()!.array as ArrayLike<number>,
+        skinIndex: handGeometry.getAttribute('skinIndex') as THREE.BufferAttribute,
+        skinWeight: handGeometry.getAttribute('skinWeight') as THREE.BufferAttribute,
+      },
+      state.toWound,
+      OFFSET_MM / 1000,
+      g,
+    );
+    if (!ok) return false;
+    // A new skeleton on the model's bones, so its inverses capture this exact pose.
+    const old = skinned.skeleton;
+    skinned.bind(new THREE.Skeleton(model.bones), skinned.matrixWorld);
+    old?.dispose();
+    return true;
   }
 
   return (
     <>
-      <primitive object={rig.root} />
-      <primitive object={occluder.root} />
-      {parts?.all.map((o) => <primitive key={o.uuid} object={o} />)}
+      {hands && <primitive object={hands.left.root} />}
+      {hands && <primitive object={hands.right.root} />}
+      {mesh && <primitive object={mesh} />}
     </>
   );
 }

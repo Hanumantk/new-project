@@ -92,17 +92,23 @@ you look when the session starts; press and slide along it with an index
 fingertip. The headset page has the same slider (live over Quest Link), and
 both remember the last value, as the webcam view's does.
 
-The wound is the same 3D model as in the webcam view, driven straight by
-the headset's hand joints. It's skinned to the wrist, thumb and metacarpal
-joints so it bends with the palm, with no smoothing (the runtime already
-predicts poses) and no fade while the hand is tracked. Invisible stand-ins
-for your fingers and palm let real fingers cover it. Passthrough pixels
-can't be read by a page, so the skin tone is picked on the in-headset
-panel.
+A detailed rigged hand model (`public/models/Hand.glb`, "Do_Hand" ©
+2026 Emma L. D. Lieker, from Sketchfab: CC BY-NC, so non-commercial use
+with credit) is posed on the headset's hand joints every frame and scaled
+to your hand; it's mirrored for a right hand.
+- The wound is laid onto that model's curved palm skin and skinned with the
+  model's own weights, so it stays fixed to the skin as the hand moves,
+  turns and bends.
+- An invisible copy of the hand hides the wound behind your real fingers
+  and the back of your hand.
+- There's no smoothing (the runtime already predicts poses) and no fade
+  while the hand is tracked.
+- The skin tone comes from the camera when allowed (Auto), otherwise from
+  the panel.
 
 ### Headset wound: settings and testing
 
-- **Panel:** the in-headset panel (below and right of straight ahead) picks the hand (Left or Right; only that hand is ever used), **Re-attach** (re-binds the wound to your palm as it is now), and the skin tone. **Auto** (on by default) reads your palm's real colour from the headset camera when the browser grants WebXR camera access: green means it's working, amber means no camera access, so the presets are used. Picking a swatch or moving the fine slider switches to manual. Press with an index fingertip; settings are saved.
+- **Panel:** the in-headset panel (below and right of straight ahead) picks the hand (Left or Right; only that hand is ever used), **Re-attach** (lays the wound onto your palm afresh, as it is now), **Mesh** (shows the tracked hand model as a wireframe over your real hand, to check how it lines up), and the skin tone. **Auto** (on by default) reads your palm's real colour from the headset camera when the browser grants WebXR camera access: green means it's working, amber means no camera access, so the presets are used. Picking a swatch or moving the fine slider switches to manual. Press with an index fingertip; settings are saved.
 - **Tunable constants** (`src/components/XRWound.tsx`): `LENGTH_CM`, `ANGLE_DEG`, `OFFSET_MM`, `PALM_OFFSET_MM`, `USE_SKINNING`. The look is `XR_WOUND_LOOK` in `src/lib/xrWoundMaterial.ts`.
 - **Emulator:** in Chrome with Meta's Immersive Web Emulator, choose Quest 3, switch input to hand tracking, then **Start mixed reality → Enter mixed reality**. Pose the left hand with its palm facing you; the wound appears on it, and the panel switches hands.
 - **Headset:** open the site in the Quest browser, allow hand tracking, put the controllers down and hold up the chosen palm. Check that the wound stays glued as you move and turn it fast, bends when you cup the palm, and is hidden by curled fingers and when the back of the hand faces you.
