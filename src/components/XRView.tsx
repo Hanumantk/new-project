@@ -5,6 +5,7 @@ import { loadKit, type KitResult } from '../mat/lib/kit';
 import type { MatSystem } from '../mat/xr/MatSystem';
 import type * as THREE from 'three';
 import type { HandStatus } from './Hud';
+import { GlassLabel } from './glass/Glass';
 import { OpacitySlider } from './OpacitySlider';
 import { XRScene, type XRMode } from './XRScene';
 
@@ -218,10 +219,14 @@ export function XRView({ onExit }: XRViewProps) {
               You’re in {mode === 'ar' ? 'mixed reality' : 'VR'}. Put the controllers down and hold up
               your open palm in front of you.
             </p>
-            <span className={`pill pill--${handStatus}`} role="status">
-              <span className="pill-dot" aria-hidden />
-              {STATUS_LABEL[handStatus]}
-            </span>
+            <GlassLabel
+              icon="hand"
+              title={handStatus === 'open' ? 'Tracking' : 'No hand'}
+              detail={handStatus === 'open' ? 'Hand' : 'Show it'}
+              tooltip={STATUS_LABEL[handStatus]}
+              on={handStatus === 'open'}
+              role="status"
+            />
             <OpacitySlider value={woundOpacity} onChange={setWoundOpacity} />
             <p className="xr-note">
               In the headset, press and slide the “Wound opacity” panel below-left of your view with a
@@ -237,9 +242,7 @@ export function XRView({ onExit }: XRViewProps) {
                 true-size outline with its quantity.
               </p>
             )}
-            <button type="button" className="button button--primary" onClick={exitSession}>
-              Exit headset
-            </button>
+            <GlassLabel icon="close" title="Exit headset" detail="End session" on onClick={exitSession} />
           </>
         ) : support === null ? (
           <p>Checking for a headset…</p>
@@ -251,9 +254,7 @@ export function XRView({ onExit }: XRViewProps) {
             </p>
             <QuestBrowserSteps />
             <p className="xr-note">Or try it in VR here, with virtual hands in a simple room:</p>
-            <button type="button" className="panel button" onClick={() => enter('vr')}>
-              Enter VR
-            </button>
+            <GlassLabel icon="headset" title="Enter VR" detail="Virtual room" onClick={() => enter('vr')} />
           </>
         ) : supported ? (
           <>
@@ -264,15 +265,18 @@ export function XRView({ onExit }: XRViewProps) {
             <OpacitySlider value={woundOpacity} onChange={setWoundOpacity} />
             <div className="xr-actions">
               {support.ar && (
-                <button type="button" className="button button--primary" onClick={() => enter('ar')}>
-                  Enter mixed reality
-                </button>
+                <GlassLabel
+                  size="2x2"
+                  icon="headset"
+                  title="Enter mixed reality"
+                  detail="Your real room"
+                  on
+                  onClick={() => enter('ar')}
+                />
               )}
               {/* This is an AR experience: VR is only the fallback where passthrough isn't possible. */}
               {support.vr && !support.ar && (
-                <button type="button" className="button button--primary" onClick={() => enter('vr')}>
-                  Enter VR
-                </button>
+                <GlassLabel size="2x2" icon="headset" title="Enter VR" detail="Virtual room" on onClick={() => enter('vr')} />
               )}
             </div>
           </>
@@ -317,9 +321,7 @@ export function XRView({ onExit }: XRViewProps) {
         {support?.ar && <KitSummary result={kitResult} />}
 
         {!mode && (
-          <button type="button" className="button button--quiet xr-back" onClick={onExit}>
-            Back
-          </button>
+          <GlassLabel icon="back" title="Back" detail="Home" onClick={onExit} />
         )}
       </div>
     </div>

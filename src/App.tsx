@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ARView } from './components/ARView';
 import { XRView } from './components/XRView';
+import { GlassGrid, GlassLabel, at } from './components/glass/Glass';
+import { GlassKit } from './components/glass/GlassKit';
 
 type Screen = { kind: 'start' } | { kind: 'ar' } | { kind: 'xr' } | { kind: 'error'; message: string };
 
@@ -24,6 +26,9 @@ function sampleVideoFromUrl(): string | null {
   return null;
 }
 
+/** `?kit`: the Liquid Glass control-tile kit on its own page. */
+const SHOW_KIT = new URLSearchParams(window.location.search).has('kit');
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: 'start' });
   const [sampleVideo] = useState(sampleVideoFromUrl);
@@ -36,6 +41,8 @@ export default function App() {
       .then(setCanMixedReality)
       .catch(() => setCanMixedReality(false));
   }, []);
+
+  if (SHOW_KIT) return <GlassKit />;
 
   if (screen.kind === 'ar') {
     return (
@@ -51,9 +58,10 @@ export default function App() {
     return <XRView onExit={() => setScreen({ kind: 'start' })} />;
   }
 
+  const startLabel = screen.kind === 'error' ? 'Try again' : sampleVideo ? 'Start sample video' : 'Start camera';
   return (
-    <main className="intro">
-      <div className="panel intro-card">
+    <main className="cc-page intro">
+      <div className="intro-inner">
         <div className="intro-icon" aria-hidden />
         <h1>Palm injury</h1>
         {screen.kind === 'error' ? (
@@ -76,26 +84,53 @@ export default function App() {
             your hand as it moves. Everything runs locally in your browser.
           </p>
         )}
-        {canMixedReality && (
-          <button type="button" className="button button--primary" onClick={() => setScreen({ kind: 'xr' })}>
-            Start mixed reality
-          </button>
-        )}
-        <button
-          type="button"
-          className={canMixedReality ? 'panel button' : 'button button--primary'}
-          onClick={() => setScreen({ kind: 'ar' })}
-        >
-          {screen.kind === 'error' ? 'Try again' : sampleVideo ? 'Start sample video' : 'Start camera'}
-        </button>
-        {!canMixedReality && !sampleVideo && (
-          <button type="button" className="panel button" onClick={() => setScreen({ kind: 'xr' })}>
-            Use a VR headset
-          </button>
-        )}
-        <a className="intro-link" href={sampleVideo ? '?' : `?video=${SAMPLE_VIDEO_PATH}`}>
-          {sampleVideo ? 'Use the webcam instead' : 'No camera? Try the sample video'}
-        </a>
+        {/* Control Center style: the main choices as 2×2 tiles, the rest as 2×1 pills. */}
+        <GlassGrid label="Start">
+          {canMixedReality && (
+            <GlassLabel
+              size="2x2"
+              style={at(1, 1, 2, 2)}
+              icon="headset"
+              title="Start mixed reality"
+              detail="Your real room"
+              on
+              onClick={() => setScreen({ kind: 'xr' })}
+            />
+          )}
+          <GlassLabel
+            size="2x2"
+            style={at(canMixedReality ? 3 : 1, 1, 2, 2)}
+            icon={sampleVideo ? 'play' : 'camera'}
+            title={startLabel}
+            detail={sampleVideo ? 'Looping clip' : 'Webcam'}
+            on={!canMixedReality}
+            onClick={() => setScreen({ kind: 'ar' })}
+          />
+          {!canMixedReality && !sampleVideo && (
+            <GlassLabel
+              size="2x2"
+              style={at(3, 1, 2, 2)}
+              icon="headset"
+              title="Use a VR headset"
+              detail="Meta Quest"
+              onClick={() => setScreen({ kind: 'xr' })}
+            />
+          )}
+          <GlassLabel
+            style={at(1, 3, 2)}
+            icon={sampleVideo ? 'camera' : 'play'}
+            title={sampleVideo ? 'Webcam' : 'Sample'}
+            detail={sampleVideo ? 'Use it' : 'Test video'}
+            onClick={() => (window.location.search = sampleVideo ? '' : `?video=${SAMPLE_VIDEO_PATH}`)}
+          />
+          <GlassLabel
+            style={at(3, 3, 2)}
+            icon="sparkles"
+            title="Glass kit"
+            detail="Preview"
+            onClick={() => (window.location.search = '?kit')}
+          />
+        </GlassGrid>
       </div>
     </main>
   );

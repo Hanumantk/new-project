@@ -49,6 +49,15 @@ renders where they differed) and four overlays you can switch separately:
 
 The HUD always shows the render FPS and the mean detection time.
 
+### Liquid Glass UI
+
+The interface follows Apple's iOS 26 Liquid Glass "Control Center" kit:
+- **Tiles:** toggles (1×1), labelled pills (2×1), tiles (2×2), vertical sliders (1×2) and a 4-chip cluster (2×2), on a 68 px grid with 15 px gutters.
+- **Materials:** Regular over wallpapers, Clear over the camera picture.
+- **Headset:** the in-headset panels are drawn the same way.
+- **Kit page:** open `/?kit` (or **Glass kit** on the start screen) to see every component in both materials and states.
+- **Code:** `src/components/glass/` (components and icons), `src/lib/glassCanvas.ts` (headset drawing).
+
 ### Mesh view
 
 The **Camera | Mesh** switch in the HUD works like the map / satellite switch
