@@ -4,10 +4,10 @@ import * as THREE from 'three';
  * A detailed hand model (public/models/Hand.glb: a sculpted left hand whose
  * bones are named as in BONES below)
  * driven by the headset's hand joints: every bone is put on the matching
- * joint, aimed at the next one and turned with the palm, and sized to the
- * user's hand: each bone's length to that segment of their hand, its width
- * and thickness to their knuckle span. Its palm is then a real curved surface the wound
- * can be fixed to, and the hand itself hides the wound behind it.
+ * joint, aimed at the next one and turned with the palm. The model keeps its
+ * own shape and proportions and is only scaled as a whole to the user's hand
+ * (palm length). Its palm is then a real curved surface the wound can be
+ * fixed to, and the hand itself hides the wound behind it.
  *
  * At load it's baked to metres (a 9.5 cm palm, wrist → middle knuckle; it's
  * resized to the user's hand afterwards), its palm side worked out from its
@@ -61,22 +61,6 @@ export interface HandModelData {
   rigidRotation: THREE.Quaternion[];
   /** Rest length wrist → middle knuckle (metres). */
   restSpan: number;
-  /** Rest length of each bone, head → the joint it aims at (0: as long, relatively, as its parent). */
-  restLength: number[];
-  /** Each bone's parent's index (−1 for the root). */
-  parent: number[];
-  /** Rest width across the knuckles (index → pinky, metres). */
-  restWidth: number;
-  /**
-   * Rest thickness of each bone's part of the hand (m): for the palm, how far
-   * its palm-side skin is from the bone; for a finger or thumb segment, its
-   * radius (0: as its parent).
-   */
-  restRadius: number[];
-  /** Palm bones (wrist, metacarpals, trapezium): width from the knuckle span, not their radius. */
-  isPalm: boolean[];
-  /** The joint whose radius (centre to skin, measured by the headset) sizes each bone's thickness. */
-  radiusJoint: (Joint | null)[];
 }
 
 /** An orthonormal frame from an aim direction and a palm-side direction (made perpendicular). */
@@ -160,70 +144,7 @@ export function prepareHandModel(source: THREE.SkinnedMesh, mirror: boolean): Ha
   const rigidOffset = names.map((_, i) => restHead[i].clone().sub(restHead[root]).applyQuaternion(rootInv));
   const rigidRotation = names.map((_, i) => rootInv.clone().multiply(restFrame[i]));
   const restSpan = head('midd_prox').distanceTo(restHead[root]);
-  const restLength = names.map((name, i) => {
-    if (name === 'radius_ulna') return restSpan;
-    if (name.endsWith('_meta') && name !== 'thumb_meta') return head(name.replace('_meta', '_prox')).distanceTo(restHead[i]);
-    const child = bones.find((b) => b.parent === bones[i] && BONES[b.name]?.head !== 'rigid');
-    return child && specs[i].head !== 'rigid' ? head(child.name).distanceTo(restHead[i]) : 0;
-  });
-  const parent = bones.map((b) => bones.indexOf(b.parent as THREE.Bone));
-  const restWidth = head('index_prox').distanceTo(head('pinky_prox'));
-
-  // Each bone's thickness at rest, from the vertices it moves most.
-  const isPalm = names.map(
-    (n) => n === 'radius_ulna' || n === 'forearm' || n === 'thumb_trapez' || (n.endsWith('_meta') && n !== 'thumb_meta'),
-  );
-  const sum = new Float64Array(names.length);
-  const cnt = new Float64Array(names.length);
-  const skinIndex = geometry.getAttribute('skinIndex');
-  const skinWeight = geometry.getAttribute('skinWeight');
-  const inv = new THREE.Quaternion();
-  for (let i = 0; i < count; i++) {
-    let best = 0, bestW = -1;
-    for (let k = 0; k < 4; k++) {
-      const w = skinWeight.getComponent(i, k);
-      const b = skinIndex.getComponent(i, k);
-      if (w > bestW) {
-        bestW = w;
-        best = b;
-      }
-    }
-    v.fromArray(pos, i * 3).sub(restHead[best]).applyQuaternion(inv.copy(restFrame[best]).invert());
-    // Local axes: x along the bone, y towards the palm side, z across. For the
-    // palm, how far its palm-side skin sits from the bone (that's where the
-    // wound lies); for a finger, its radius.
-    if (isPalm[best]) {
-      if (v.y <= 0) continue;
-      sum[best] += v.y;
-    } else {
-      sum[best] += Math.hypot(v.y, v.z);
-    }
-    cnt[best]++;
-  }
-  const restRadius = names.map((_, i) => (cnt[i] > 20 ? sum[i] / cnt[i] : 0));
-  const radiusJoint = names.map((name, i): Joint | null => {
-    if (name === 'radius_ulna') return 'middle-finger-metacarpal';
-    if (name === 'thumb_trapez') return 'thumb-metacarpal';
-    const spec = specs[i];
-    if (spec.head === 'rigid') return (spec.roll as Joint) ?? null;
-    return spec.head as Joint;
-  });
-  return {
-    geometry,
-    names,
-    specs,
-    restHead,
-    restFrame,
-    rigidOffset,
-    rigidRotation,
-    restSpan,
-    restLength,
-    parent,
-    restWidth,
-    restRadius,
-    isPalm,
-    radiusJoint,
-  };
+  return { geometry, names, specs, restHead, restFrame, rigidOffset, rigidRotation, restSpan };
 }
 
 /**
@@ -254,20 +175,16 @@ export class XRHandModel {
   private calibrating = false;
   private calFrames = 0;
   private calPalm = 0;
-  private readonly calSum: THREE.Vector3[];
-  private readonly calScale: THREE.Vector3[];
-  private readonly thickScale: Float64Array;
   private readonly push = { value: OCCLUDER_PUSH };
   private readonly heads: THREE.Vector3[];
   private readonly frames: THREE.Quaternion[];
-  /** Per bone: its length scale (user / model), and its scale vector (length, thickness, width). */
-  private readonly lengthScale: Float64Array;
-  private readonly boneScale: THREE.Vector3[];
+  /** The whole hand's scale (user / model), the same for every bone. */
+  private readonly scale = new THREE.Vector3(1, 1, 1);
   private readonly a = new THREE.Vector3();
   private readonly n = new THREE.Vector3();
   private readonly palm = new THREE.Vector3();
   private readonly m = new THREE.Matrix4();
-  private readonly root_ = { head: new THREE.Vector3(), frame: new THREE.Quaternion(), scale: new THREE.Vector3(1, 1, 1) };
+  private readonly root_ = { head: new THREE.Vector3(), frame: new THREE.Quaternion() };
 
   constructor(readonly data: HandModelData) {
     this.bones = data.names.map((name, i) => {
@@ -281,11 +198,6 @@ export class XRHandModel {
       return bone;
     });
     this.heads = data.names.map(() => new THREE.Vector3());
-    this.lengthScale = new Float64Array(data.names.length).fill(1);
-    this.boneScale = data.names.map(() => new THREE.Vector3(1, 1, 1));
-    this.calSum = data.names.map(() => new THREE.Vector3());
-    this.calScale = data.names.map(() => new THREE.Vector3(1, 1, 1));
-    this.thickScale = new Float64Array(data.names.length).fill(1);
     this.frames = data.names.map(() => new THREE.Quaternion());
     const skeleton = new THREE.Skeleton(this.bones);
     const occluderMaterial = new THREE.MeshBasicMaterial({ colorWrite: false });
@@ -304,7 +216,7 @@ export class XRHandModel {
     this.occluder = new THREE.SkinnedMesh(data.geometry, occluderMaterial);
     this.wire = new THREE.SkinnedMesh(
       data.geometry,
-      new THREE.MeshBasicMaterial({ color: '#7cf0b0', wireframe: true, transparent: true, opacity: 0.25, depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: '#7cf0b0', wireframe: true, transparent: true, opacity: 0.15, depthTest: false }),
     );
     for (const mesh of [this.occluder, this.wire]) {
       mesh.bind(skeleton, new THREE.Matrix4());
@@ -324,14 +236,11 @@ export class XRHandModel {
     const knuckle = j['middle-finger-phalanx-proximal'];
     const middle = j['middle-finger-metacarpal'];
     if (!wrist || !knuckle || !middle) return false;
-    const indexKnuckle = j['index-finger-phalanx-proximal'];
-    const pinkyKnuckle = j['pinky-finger-phalanx-proximal'];
-    if (!indexKnuckle || !pinkyKnuckle) return false;
-    // Sized to this hand: each bone's length to its own segment, its thickness
-    // to the headset's measured joint radius, the palm's width to the knuckle span.
+    // The model keeps its own shape and proportions; it's only scaled as a
+    // whole to this hand's size (palm length, averaged when calibrating).
     const palmLength = wrist.position.distanceTo(knuckle.position);
     if (!this.calibrated) this.palmLength = palmLength;
-    const widthScale = indexKnuckle.position.distanceTo(pinkyKnuckle.position) / d.restWidth;
+    this.scale.setScalar(this.palmLength / d.restSpan);
     this.palm.set(0, -1, 0).applyQuaternion(middle.quaternion);
 
     for (let pass = 0; pass < 2; pass++) {
@@ -343,7 +252,7 @@ export class XRHandModel {
         const head = this.heads[i];
         if (rigid) {
           const root = this.root_;
-          head.copy(d.rigidOffset[i]).multiply(root.scale).applyQuaternion(root.frame).add(root.head);
+          head.copy(d.rigidOffset[i]).multiply(this.scale).applyQuaternion(root.frame).add(root.head);
         } else {
           const joint = j[spec.head as Joint];
           if (!joint) return false;
@@ -352,49 +261,29 @@ export class XRHandModel {
         if (spec.aim) {
           const target = j[spec.aim];
           if (!target) return false;
-          this.a.subVectors(target.position, head);
-          const restLength = d.restLength[i];
-          this.lengthScale[i] = restLength > 0 ? this.a.length() / restLength : this.lengthScale[d.parent[i]] || 1;
-          this.a.normalize();
+          this.a.subVectors(target.position, head).normalize();
           if (spec.roll === 'palm' || !spec.roll) this.n.copy(this.palm);
           else this.n.set(0, -1, 0).applyQuaternion(j[spec.roll]!.quaternion);
           // The bone's axes are its frame (aim, palm side), as at rest.
           frame(this.a, this.n, this.frames[i], this.m);
         } else {
           this.frames[i].copy(this.root_.frame).multiply(d.rigidRotation[i]);
-          this.lengthScale[i] = widthScale;
-        }
-        const radiusJoint = d.radiusJoint[i] ? j[d.radiusJoint[i]!] : undefined;
-        const radius = radiusJoint?.jointRadius;
-        this.thickScale[i] =
-          radius && d.restRadius[i] > 0
-            ? THREE.MathUtils.clamp(radius / d.restRadius[i], 0.5, 2.5)
-            : this.thickScale[d.parent[i]] || 1;
-        const scale = this.boneScale[i];
-        if (this.calibrated) scale.copy(this.calScale[i]);
-        else scale.set(this.lengthScale[i], this.thickScale[i], d.isPalm[i] ? widthScale : this.thickScale[i]);
-        if (this.calibrating) {
-          this.calSum[i].x += this.lengthScale[i];
-          this.calSum[i].y += this.thickScale[i];
-          this.calSum[i].z += d.isPalm[i] ? widthScale : this.thickScale[i];
         }
         if (d.names[i] === 'radius_ulna') {
           this.root_.head.copy(head);
           this.root_.frame.copy(this.frames[i]);
-          this.root_.scale.copy(scale);
         }
       }
     }
     for (let i = 0; i < this.bones.length; i++) {
       const bone = this.bones[i];
-      bone.matrixWorld.compose(this.heads[i], this.frames[i], this.boneScale[i]);
+      bone.matrixWorld.compose(this.heads[i], this.frames[i], this.scale);
       bone.matrix.copy(bone.matrixWorld);
     }
     if (this.calibrating) {
       this.calPalm += palmLength;
       if (++this.calFrames >= CALIBRATION_FRAMES) {
-        // Freeze this hand's sizes: steadier than measuring them every frame.
-        for (let i = 0; i < this.calScale.length; i++) this.calScale[i].copy(this.calSum[i]).divideScalar(this.calFrames);
+        // Freeze this hand's size: steadier than measuring it every frame.
         this.palmLength = this.calPalm / this.calFrames;
         this.calibrating = false;
         this.calibrated = true;
@@ -409,7 +298,6 @@ export class XRHandModel {
     this.calibrated = false;
     this.calFrames = 0;
     this.calPalm = 0;
-    for (const v of this.calSum) v.set(0, 0, 0);
   }
 
   /** Pushes the occluder further back (m), when the wound is lowered into the skin. */
