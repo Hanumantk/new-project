@@ -100,9 +100,10 @@ const INK_TEXT = hex(COLORS.ink);
  * rim): normal, with a hand on it, and while it's carried.
  */
 const BACKING = {
-  none: { color: new THREE.Color('#3b4340'), opacity: 0.58 },
-  hover: { color: new THREE.Color('#47524d'), opacity: 0.66 },
-  held: { color: new THREE.Color('#53615a'), opacity: 0.74 },
+  // Dense enough that its text keeps >= 4.5:1 against a bright room.
+  none: { color: new THREE.Color('#3b4340'), opacity: 0.86 },
+  hover: { color: new THREE.Color('#47524d'), opacity: 0.9 },
+  held: { color: new THREE.Color('#53615a'), opacity: 0.92 },
 };
 const LABEL_TEXT = hex(COLORS.label);
 
@@ -125,7 +126,7 @@ export class ControlPanel {
 
   constructor(private readonly actions: PanelActions) {
     this.group.rotation.order = 'YXZ';
-    const backing = new THREE.Mesh(roundedRect(WIDTH, HEIGHT, 0.024), material('#3b4340', 0.58));
+    const backing = new THREE.Mesh(roundedRect(WIDTH, HEIGHT, 0.024), material('#3b4340', 0.86));
     backing.renderOrder = 40;
     this.backing = backing;
     const rim = new THREE.Mesh(roundedRing(WIDTH, HEIGHT, 0.024, 0.0012), material('#ffffff', 0.45));

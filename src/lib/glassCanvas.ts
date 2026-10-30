@@ -6,7 +6,7 @@
  */
 
 export const GLASS_TEXT = '#ffffff';
-export const GLASS_TEXT_MUTED = 'rgba(255, 255, 255, 0.72)';
+export const GLASS_TEXT_MUTED = 'rgba(255, 255, 255, 0.82)';
 /** Text on a selected (white) control. */
 export const GLASS_TEXT_ON_SELECTED = '#1c2420';
 export const GLASS_FONT = '"DM Sans", system-ui, -apple-system, sans-serif';
@@ -18,10 +18,11 @@ function path(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h:
 
 /** A glass panel filling (x, y, w, h) with corner radius r. */
 export function drawGlassPanel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  // Body: smoky, a touch lighter at the top.
+  // Body: smoky, a touch lighter at the top, and dense enough that white
+  // text keeps >= 4.5:1 even in front of a white wall.
   const body = ctx.createLinearGradient(0, y, 0, y + h);
-  body.addColorStop(0, 'rgba(96, 104, 100, 0.66)');
-  body.addColorStop(1, 'rgba(44, 50, 47, 0.6)');
+  body.addColorStop(0, 'rgba(46, 51, 49, 0.86)');
+  body.addColorStop(1, 'rgba(28, 31, 30, 0.84)');
   path(ctx, x, y, w, h, r);
   ctx.fillStyle = body;
   ctx.fill();
