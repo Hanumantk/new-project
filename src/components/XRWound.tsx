@@ -13,7 +13,7 @@ import { createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
 const WOUND_URL = `${import.meta.env.BASE_URL}models/Wound.glb`;
 
 /** The wound's length (cm)… */
-export const LENGTH_CM = 6.5;
+export const LENGTH_CM = 8.5;
 /** …turned this far from the palm's long axis towards the thumb (degrees)… */
 export const ANGLE_DEG = 35;
 /** …this far above the skin (mm)… */
