@@ -92,13 +92,11 @@ you look when the session starts; press and slide along it with an index
 fingertip. The headset page has the same slider (live over Quest Link), and
 both remember the last value, as the webcam view's does.
 
-The wound itself is the same as in the webcam view (curved palm mesh,
-relief, cavity shading, wet-only gloss, feathered edges, angle fade, and the
+The wound itself is the same 3D model as in the webcam view (bent onto the
+palm, cavity shading, wet-only gloss, feathered edges, angle fade, and the
 fade when fingers cover most of it). What can't carry over to passthrough:
 light and skin-tone matching and the camera-matching blur/grain need the
-camera's pixels, which WebXR doesn't give a page, and the bruise is laid
-over rather than multiplied, since passthrough is composited by the
-headset.
+camera's pixels, which WebXR doesn't give a page.
 
 ## Material mat (in the mixed-reality injury simulation)
 
@@ -250,9 +248,9 @@ overlap the outline behind it a little.
 | Captured frame as the full-screen background (or the plain mesh-view backdrop) | `src/components/VideoBackground.tsx` |
 | Mesh view: grayscale hand mesh posed from the landmarks | `src/components/HandMeshView.tsx`, `src/lib/handRig.ts` |
 | Lights from the skin, wound pass, camera-matching post pass | `src/components/WebcamCompositor.tsx` |
-| The wound model, bruise, palm stand-in, fades, debug overlays | `src/components/WoundModel.tsx` |
+| The wound model, palm stand-in, fades, debug overlays | `src/components/WoundModel.tsx` |
 | Loading and normalising `Wound.glb` (size, skin level, per-vertex shading data) | `src/lib/woundGeometry.ts` |
-| Bending onto the palm (GLSL), wound and bruise materials | `src/lib/woundShaders.ts` |
+| Bending onto the palm (GLSL), the wound's material | `src/lib/woundShaders.ts` |
 | Palm template, palm surface, wound placement | `src/lib/palmModel.ts` |
 | Webcam palm pose: rigid fit, depth from palm size, jitter meter | `src/lib/webcamPalm.ts`, `src/lib/rigidFit.ts` |
 | Pose smoothing (One Euro on position, size and rotation; deadband; lead) | `src/lib/poseFilter.ts`, `src/lib/oneEuroFilter.ts` |
@@ -310,16 +308,16 @@ overlap the outline behind it a little.
   between 55° and 75° away from the camera.
 - **Looking real.** A custom physical material (`onBeforeCompile`):
   - Colour comes from each vertex's height and nearness to the cut: blood
-    #3a0508–#5a0a0f in the depths, raw #8b1a1a walls with mottling, the
-    swollen rim in your own skin tone (no red border), and an outer edge that
-    fades into your skin (alpha to 0).
+    #3a0508–#5a0a0f in the depths and raw #8b1a1a walls with mottling.
+  - The swollen lips are your skin exactly as the camera sees it, shaded
+    only by how their shape catches the light compared with a flat palm, so
+    there's no border or shadow ring. Everything near skin level fades to
+    transparent, so the real skin shows there.
   - Wet clearcoat (roughness 0.1) is only in the cut; elsewhere roughness is 0.6.
   - Occlusion comes from depth and creases.
   - Procedural micro-bumps.
   - Subsurface scattering is faked with wrapped lighting and a red tint.
   - Soft reflections come from a studio environment map.
-  - A faint purple-blue bruise and a contact shadow around the rim multiply
-    the camera picture, so the real skin's texture shows through.
 - **On the skin.** Every few frames the skin around the wound is read from a
   small downscaled canvas. The ambient and directional lights follow its
   brightness and colour, and the rim takes its tone.
@@ -352,7 +350,7 @@ overlap the outline behind it a little.
 - `src/lib/woundGeometry.ts`: the wound's length (`WOUND_LENGTH`) and how
   wide its edge blends into the skin.
 - `src/lib/woundShaders.ts`: `WOUND_LOOK` (colours, wetness, subsurface,
-  occlusion, micro-bumps) and `BRUISE_LOOK`.
+  occlusion, micro-bumps).
 - `src/lib/poseFilter.ts`: smoothing, deadband and lead.
 - `src/components/WoundModel.tsx`: fade angles, finger-coverage fade.
 - `src/components/WebcamCompositor.tsx`: blur, saturation, contrast, grain

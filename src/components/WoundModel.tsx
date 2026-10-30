@@ -18,8 +18,6 @@ import {
 import type { SkinLighting } from '../lib/skinLighting';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
 import {
-  BRUISE_LOOK,
-  createBruiseMaterial,
   createConformLineMaterial,
   createPalmSurfaceMaterial,
   createWoundMaterial,
@@ -59,14 +57,13 @@ interface WoundModelProps {
    */
   occlude?: boolean;
   /**
-   * Webcam mode: the bruise multiplies into the camera picture, and the wound
-   * goes on its own layer for the compositor's camera-matching pass.
-   * Otherwise (headset passthrough) both are drawn directly.
+   * Webcam mode: the wound goes on its own layer for the compositor's
+   * camera-matching pass. Otherwise (headset passthrough) it's drawn directly.
    */
   composite?: boolean;
   /** Light matching from the real skin (webcam mode). */
   lighting?: RefObject<SkinLighting>;
-  /** User-set wound opacity, 0..1 (scales the wound and bruise together). */
+  /** User-set wound opacity, 0..1. */
   strength?: RefObject<number>;
   /** Show the palm surface as a wireframe… */
   debugSurface?: boolean;
@@ -78,7 +75,7 @@ interface WoundModelProps {
  * The 3D wound from public/models/Wound.glb, glued to the palm: its group's
  * matrix is the palm's rigid pose (set once per frame, from the same camera
  * frame the picture shows), and the GPU bends it onto the palm's curved
- * surface. With it: the bruise around it, depth stand-ins for the palm and
+ * surface. With it: depth stand-ins for the palm and
  * fingers, and the debug overlays.
  */
 export function WoundModel({
@@ -96,13 +93,11 @@ export function WoundModel({
   const [info, setInfo] = useState<WoundGeometryInfo | null>(null);
   const groupRef = useRef<THREE.Group>(null);
   const woundRef = useRef<THREE.Mesh>(null);
-  const bruiseRef = useRef<THREE.Mesh>(null);
   const palmRef = useRef<THREE.Mesh>(null);
   const wireRef = useRef<THREE.Mesh>(null);
   const boxRef = useRef<THREE.LineSegments>(null);
 
   const woundMaterial = useMemo(() => createWoundMaterial(), []);
-  const bruiseMaterial = useMemo(() => createBruiseMaterial(composite), [composite]);
   const palmMaterial = useMemo(() => createPalmSurfaceMaterial('depth'), []);
   const wireMaterial = useMemo(() => createPalmSurfaceMaterial('wire'), []);
   const boxMaterial = useMemo(() => createConformLineMaterial('#ffd34d'), []);
@@ -132,12 +127,7 @@ export function WoundModel({
     };
   }, []);
 
-  // The bruise plane and the debug box follow the wound's size.
-  const bruiseGeometry = useMemo(() => {
-    if (!info) return null;
-    const reach = info.halfWidth * BRUISE_LOOK.spread * 1.35;
-    return new THREE.PlaneGeometry(2 * (info.halfWidth + reach), 2 * (info.halfLength + reach), 32, 64).rotateX(-Math.PI / 2);
-  }, [info]);
+  // The debug box follows the wound's size.
   const boxGeometry = useMemo(() => {
     if (!info) return null;
     const box = info.geometry.boundingBox!;
@@ -145,7 +135,6 @@ export function WoundModel({
     const c = box.getCenter(new THREE.Vector3());
     return new THREE.EdgesGeometry(new THREE.BoxGeometry(s.x, s.y, s.z)).translate(c.x, c.y, c.z);
   }, [info]);
-  useEffect(() => () => bruiseGeometry?.dispose(), [bruiseGeometry]);
   useEffect(() => () => boxGeometry?.dispose(), [boxGeometry]);
 
   // Layers: in webcam mode the wound is rendered in its own pass; the depth
@@ -170,7 +159,6 @@ export function WoundModel({
     return () => envMap.dispose();
   }, [gl, woundMaterial]);
 
-  useEffect(() => () => bruiseMaterial.dispose(), [bruiseMaterial]);
   useEffect(
     () => () => {
       woundMaterial.dispose();
@@ -224,11 +212,10 @@ export function WoundModel({
     const hand = pose.current;
     const group = groupRef.current;
     const wound = woundRef.current;
-    const bruise = bruiseRef.current;
     const palmMesh = palmRef.current;
     const wire = wireRef.current;
     const box = boxRef.current;
-    if (!hand || !group || !wound || !bruise || !palmMesh || !wire || !box || !info) return;
+    if (!hand || !group || !wound || !palmMesh || !wire || !box || !info) return;
     const s = scratch;
     const palm = hand.palm;
     // Shown only once the palm's shape is captured, so it never shifts on it.
@@ -240,7 +227,7 @@ export function WoundModel({
         s.templateVersion = palm.templateVersion;
         fitPalmSurface(palm.template, s.surface);
         placeWound(palm.template, s.placement);
-        for (const u of [woundMaterial.userData.uniforms, bruiseMaterial.uniforms, palmMaterial.uniforms, wireMaterial.uniforms, boxMaterial.uniforms] as ConformUniforms[]) {
+        for (const u of [woundMaterial.userData.uniforms, palmMaterial.uniforms, wireMaterial.uniforms, boxMaterial.uniforms] as ConformUniforms[]) {
           setConformUniforms(u, s.surface, s.placement);
         }
         const cx = (s.surface.minX + s.surface.maxX) / 2;
@@ -260,7 +247,6 @@ export function WoundModel({
 
       const lift = WOUND_LIFT;
       woundMaterial.userData.uniforms.surfLift.value = lift;
-      bruiseMaterial.uniforms.surfLift.value = lift * 0.5;
       boxMaterial.uniforms.surfLift.value = lift;
       palmMaterial.uniforms.lift.value = -PALM_BACKOFF;
 
@@ -308,14 +294,16 @@ export function WoundModel({
 
     const opacity = s.opacity * angleFade * s.uncovered * THREE.MathUtils.clamp(strength?.current ?? 1, 0, 1);
     woundMaterial.opacity = opacity;
-    bruiseMaterial.uniforms.opacity.value = opacity;
-    wound.visible = bruise.visible = opacity > 0;
+    wound.visible = opacity > 0;
     wire.visible = debugSurface && placed;
     box.visible = debugBox && placed;
 
     // The rim and torn skin take on the real skin's colour.
     const light = lighting?.current;
-    if (light) woundMaterial.userData.uniforms.skinAlbedo.value.fromArray(light.skinAlbedo);
+    const u = woundMaterial.userData.uniforms;
+    if (light) u.skinAlbedo.value.fromArray(light.skinAlbedo);
+    if (light?.seen) u.skinSeen.value.fromArray(light.seen);
+    u.skinSeenOn.value = light?.seen ? 1 : 0;
 
     // Keep the invisible hand in step so the real hand hides the wound
     // whenever the palm is turned away or fingers curl over it.
@@ -330,9 +318,6 @@ export function WoundModel({
       <primitive object={occluder.root} />
       <group ref={groupRef} matrixAutoUpdate={false}>
         <mesh ref={palmRef} geometry={palmGrid} material={palmMaterial} frustumCulled={false} renderOrder={-1} visible={false} />
-        {bruiseGeometry && (
-          <mesh ref={bruiseRef} geometry={bruiseGeometry} material={bruiseMaterial} frustumCulled={false} renderOrder={1} visible={false} />
-        )}
         {info && (
           <mesh ref={woundRef} geometry={info.geometry} material={woundMaterial} frustumCulled={false} renderOrder={2} visible={false} />
         )}

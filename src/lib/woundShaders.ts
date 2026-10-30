@@ -4,7 +4,7 @@ import { REF_SKIN_LINEAR } from './skinLighting';
 
 /**
  * Shaders that lay the wound (and everything that goes with it) onto the
- * palm's curved surface, and the wound's and bruise's materials.
+ * palm's curved surface, and the wound's material.
  *
  * Everything is drawn in the canonical palm frame (the object's matrix is
  * the palm's rigid pose), so the GPU bends each vertex onto the surface
@@ -101,7 +101,7 @@ export const CONFORM_PARS = /* glsl */ `
   }
 `;
 
-/** Cheap value noise and fBm, shared by the wound and the bruise. */
+/** Cheap value noise and fBm. */
 const NOISE_GLSL = /* glsl */ `
   float woundHash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -151,7 +151,7 @@ export const WOUND_LOOK = {
   creaseOcclusion: 0.45,
   /** Micro bumps (metres) on raw tissue and on skin, and their size (per metre). */
   microBumpWet: 0.00006,
-  microBumpSkin: 0.00002,
+  microBumpSkin: 0,
   microBumpScale: 1400,
   /** Faint studio reflections (the environment is far brighter than a room). */
   envIntensity: 0.18,
@@ -169,6 +169,9 @@ export interface WoundMaterialUniforms extends ConformUniforms {
   depthOcclusion: { value: number };
   creaseOcclusion: { value: number };
   microBump: { value: THREE.Vector3 };
+  /** The real skin as seen (linear), and whether it's known. */
+  skinSeen: { value: THREE.Color };
+  skinSeenOn: { value: number };
 }
 
 /**
@@ -206,6 +209,8 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
     depthOcclusion: { value: L.depthOcclusion },
     creaseOcclusion: { value: L.creaseOcclusion },
     microBump: { value: new THREE.Vector3(L.microBumpWet, L.microBumpSkin, L.microBumpScale) },
+    skinSeen: { value: new THREE.Color().fromArray(REF_SKIN_LINEAR) },
+    skinSeenOn: { value: 0 },
   };
   material.userData.uniforms = uniforms;
   material.onBeforeCompile = (shader) => {
@@ -217,7 +222,8 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
         ${CONFORM_PARS}
         attribute vec4 woundSurf;
         varying vec4 vWoundSurf;
-        varying vec3 vWoundLocal;`,
+        varying vec3 vWoundLocal;
+        varying vec3 vPalmNormal;`,
       )
       .replace(
         '#include <beginnormal_vertex>',
@@ -225,11 +231,26 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
         vec3 conformed = conformPoint(position, surfNormal);
         vec3 objectNormal = tiltTo(woundDirToPalm(normal), surfNormal);
         vWoundSurf = woundSurf;
-        vWoundLocal = position;`,
+        vWoundLocal = position;
+        vPalmNormal = normalize(normalMatrix * surfNormal);`,
       )
       .replace('#include <begin_vertex>', 'vec3 transformed = conformed;');
 
     const sss = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+      'vec3 irradiance = dotNL * directLight.color;',
+      `// Skin-coloured parts are lit softly (light wrapped well round), so the
+      // swollen lips never turn into a darker band against the real skin.
+      float skinWrap = 0.9 * woundSkin;
+      float softNL = saturate( ( dot( geometryNormal, directLight.direction ) + skinWrap ) / ( 1.0 + skinWrap ) );
+      vec3 irradiance = mix( dotNL, softNL, woundSkin ) * directLight.color;
+      woundShapeIrr += irradiance;
+      woundFlatIrr += saturate( dot( normalize( vPalmNormal ), directLight.direction ) ) * directLight.color;`,
+    ).replace(
+      'vec3 diffuse = irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - singleScattering - multiScattering );',
+      `vec3 diffuse = irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - singleScattering - multiScattering );
+      woundShapeIrr += irradiance;
+      woundFlatIrr += irradiance;`,
+    ).replace(
       'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );',
       `reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );
       // Light scattered under the surface wraps past the terminator, reddened.
@@ -253,10 +274,18 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
         uniform float depthOcclusion;
         uniform float creaseOcclusion;
         uniform vec3 microBump;
+        uniform vec3 skinSeen;
+        uniform float skinSeenOn;
         varying vec4 vWoundSurf;
         varying vec3 vWoundLocal;
+        varying vec3 vPalmNormal;
+        // Light reaching the wound's actual surface, and a flat palm at the same spot.
+        vec3 woundShapeIrr = vec3(0.0);
+        vec3 woundFlatIrr = vec3(0.0);
+        float woundTone = 1.0;
         float woundWet = 0.0;
         float woundAO = 1.0;
+        float woundSkin = 0.0;
         ${NOISE_GLSL}
         // Bump mapping from a procedural height (Mikkelsen's surface gradient).
         vec3 woundBump(vec3 surfPos, vec3 n, float height) {
@@ -283,20 +312,28 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
         float fine = woundFbm(np * 3.1 + 5.0);
 
         // Rim: the real skin (its swelling shows by shape and light alone), faintly mottled.
-        vec3 rimCol = skinAlbedo * (0.94 + 0.08 * mottle);
+        woundTone = 0.94 + 0.08 * mottle;
+        vec3 rimCol = skinAlbedo * woundTone;
         // Raw tissue on the lips' inner faces and the cut's walls, then blood in its depths.
         vec3 wallCol = colWall * (0.7 + 0.55 * mottle) * (0.9 + 0.2 * fine);
         vec3 deepCol = mix(colDeep, colDeepest, smoothstep(0.55, 1.0, depth) * (0.7 + 0.3 * fine));
-        vec3 woundCol = mix(rimCol, wallCol, smoothstep(0.05, 0.85, cut));
+        // Skin → raw tissue through a warm, blood-tinted red rather than a dull mix.
+        float rawT = smoothstep(0.05, 0.85, cut);
+        woundSkin = 1.0 - rawT;
+        vec3 woundCol = mix(rimCol, rimCol * vec3(0.95, 0.55, 0.5), smoothstep(0.0, 0.5, rawT));
+        woundCol = mix(woundCol, wallCol, smoothstep(0.35, 1.0, rawT));
         woundCol = mix(woundCol, deepCol, smoothstep(0.2, 0.8, depth));
         diffuseColor.rgb = woundCol;
-        // The outer edge melts into the real skin.
-        diffuseColor.a *= smoothstep(0.0, 1.0, inward);
+        // The outer edge melts into the real skin; so does everything near skin
+        // level, so the real skin (not a lit copy of it) shows around the lips.
+        float rise = clamp(height, 0.0, 1.0);
+        diffuseColor.a *= smoothstep(0.0, 1.0, inward) * smoothstep(0.05, 0.5, rise + cut);
 
         // Wet only in the cut (with a few drier patches on its walls).
         woundWet = smoothstep(0.55, 0.95, cut) * smoothstep(0.15, 0.45, mottle + 0.3 * depth);
         // Occlusion from depth and creases.
-        woundAO = 1.0 - depthOcclusion * pow(depth, 1.3) - creaseOcclusion * crease * (0.6 + 0.4 * cut);`,
+        // (Only in and right by the cut: no dark ring on the skin around it.)
+        woundAO = 1.0 - depthOcclusion * pow(depth, 1.3) - creaseOcclusion * crease * cut;`,
       )
       .replace(
         '#include <roughnessmap_fragment>',
@@ -314,111 +351,30 @@ export function createWoundMaterial(): THREE.MeshPhysicalMaterial & { userData: 
       )
       .replace('material.clearcoat = clearcoat;', 'material.clearcoat = clearcoat * woundWet;')
       .replace(
+        '#include <opaque_fragment>',
+        `// Skin-coloured parts: the skin exactly as the camera sees it, shaded only
+        // by how the swelling's shape catches the light compared with a flat palm.
+        if (skinSeenOn > 0.5) {
+          vec3 shapeShade = woundShapeIrr / max(woundFlatIrr, vec3(1e-4));
+          vec3 seenSkin = skinSeen * woundTone * shapeShade * mix(1.0, woundAO, 0.75);
+          outgoingLight = mix(outgoingLight, seenSkin + totalSpecular, woundSkin);
+        }
+        #include <opaque_fragment>`,
+      )
+      .replace(
         '#include <aomap_fragment>',
         `#include <aomap_fragment>
         woundAO = clamp(woundAO, 0.0, 1.0);
         reflectedLight.indirectDiffuse *= woundAO;
-        reflectedLight.indirectSpecular *= woundAO;
+        // Reflections of the (studio) environment only on the wet cut; on the dry
+        // rim they'd read as a grey sheen.
+        reflectedLight.indirectSpecular *= woundAO * mix(0.2, 1.0, woundWet);
         reflectedLight.directDiffuse *= mix(1.0, woundAO, 0.75);
         reflectedLight.directSpecular *= mix(1.0, woundAO, 0.5);`,
       );
   };
   material.customProgramCacheKey = () => 'wound-glb';
   return material as THREE.MeshPhysicalMaterial & { userData: { uniforms: WoundMaterialUniforms } };
-}
-
-export interface BruiseUniforms extends ConformUniforms {
-  opacity: { value: number };
-  /** Wound half-width and half-length (wound-local metres). */
-  woundHalf: { value: THREE.Vector2 };
-  skinRef: { value: THREE.Color };
-  bruiseCol: { value: THREE.Color };
-  strength: { value: number };
-}
-
-/** The bruise and contact shadow around the wound. Colours are sRGB hex. */
-export const BRUISE_LOOK = {
-  /** Purple-blue bruise. */
-  bruise: '#7a5a8c',
-  strength: 0.5,
-  /** How far beyond the wound the bruise spreads (multiples of its half-width). */
-  spread: 2.4,
-} as const;
-
-/**
- * The bruise: a plane around the wound laid onto the palm. In webcam mode it
- * multiplies the camera picture (the real skin's texture and noise show
- * through); in a headset it's laid over the passthrough.
- */
-export function createBruiseMaterial(multiply: boolean): THREE.ShaderMaterial & { uniforms: BruiseUniforms } {
-  const B = BRUISE_LOOK;
-  const uniforms: BruiseUniforms = {
-    ...createConformUniforms(),
-    opacity: { value: 0 },
-    woundHalf: { value: new THREE.Vector2(0.008, 0.025) },
-    skinRef: { value: new THREE.Color().fromArray(REF_SKIN_LINEAR) },
-    bruiseCol: { value: srgb(B.bruise) },
-    strength: { value: B.strength },
-  };
-  const material = new THREE.ShaderMaterial({
-    uniforms: uniforms as unknown as Record<string, THREE.IUniform>,
-    defines: multiply ? { MULTIPLY: '' } : {},
-    vertexShader: /* glsl */ `
-      ${CONFORM_PARS}
-      varying vec2 vLocal;
-      void main() {
-        vec3 n;
-        vec3 p = conformPoint(vec3(position.x, 0.0, position.z), n);
-        vLocal = position.xz;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float opacity;
-      uniform vec2 woundHalf;
-      uniform vec3 skinRef;
-      uniform vec3 bruiseCol;
-      uniform float strength;
-      varying vec2 vLocal;
-      ${NOISE_GLSL}
-      void main() {
-        // Distance from the wound's outline, measured in wound half-widths:
-        // a stadium (capsule) around its long axis.
-        float along = max(abs(vLocal.y) - (woundHalf.y - woundHalf.x), 0.0);
-        float d = length(vec2(vLocal.x, along)) / woundHalf.x; // 1 = the wound's edge
-        float mottle = woundFbm(vLocal * 260.0);
-        float blotch = woundFbm(vLocal * 90.0 + 3.0);
-        float spread = ${B.spread.toFixed(2)} * (0.8 + 0.5 * blotch);
-        float bruise = (1.0 - smoothstep(0.6, spread, d)) * (0.65 + 0.5 * mottle);
-        // Contact shadow just outside the swollen rim.
-        float shadow = smoothstep(0.75, 1.0, d) * (1.0 - smoothstep(1.0, 1.35, d));
-        vec3 tint = bruiseCol;
-        float amount = clamp(bruise * strength, 0.0, 1.0) * opacity;
-        vec3 factor = mix(vec3(1.0), clamp(tint / skinRef, 0.0, 1.0), amount);
-        factor *= 1.0 - 0.22 * shadow * opacity;
-        #ifdef MULTIPLY
-          // The framebuffer holds sRGB-encoded colour: encode the (linear) factor to match.
-          gl_FragColor = vec4(pow(factor, vec3(1.0 / 2.2)), 1.0);
-        #else
-          // Over passthrough: the bruise colour, as strong as the multiply would darken.
-          float a = clamp(1.0 - dot(factor, vec3(0.333)), 0.0, 1.0) * 1.6;
-          gl_FragColor = vec4(tint * skinRef / max(dot(skinRef, vec3(0.333)), 1e-3) * 0.9, clamp(a, 0.0, 1.0));
-          #include <colorspace_fragment>
-        #endif
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    ...(multiply
-      ? {
-          blending: THREE.CustomBlending,
-          blendEquation: THREE.AddEquation,
-          blendSrc: THREE.ZeroFactor,
-          blendDst: THREE.SrcColorFactor,
-        }
-      : {}),
-  });
-  return material as THREE.ShaderMaterial & { uniforms: BruiseUniforms };
 }
 
 /**
