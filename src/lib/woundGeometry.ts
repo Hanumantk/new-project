@@ -8,6 +8,10 @@ export const EDGE_BLEND = 0.0035;
 export const CUT_BLEND = 0.0012;
 /** The cut starts this far below the lowest point of the outer edge (metres). */
 const CUT_MARGIN = 0.0001;
+/** Build stage 1: the bare skin, every vertex pressed down to this height (m). */
+export const FLAT_HEIGHT = 0.0003;
+/** Build stage 2: the uncut wax mound reaches the rim's height this far in (fraction of the furthest point from the edge). */
+const MOUND_PLATEAU = 0.7;
 
 /**
  * Normalising Wound.glb for the palm. The model is an open surface (no
@@ -21,6 +25,11 @@ const CUT_MARGIN = 0.0001;
  *   x: height, −1 (deepest cut) … 0 (skin level) … +1 (top of the rim)
  *   y: inwardness, 0 on the outer edge … 1 once EDGE_BLEND inside it
  *   z: concavity, 0 (flat or convex) … 1 (deep crease), for occlusion
+ *   w: nearness to the cut
+ * and, for the build stages (see woundSteps.ts), `woundShape` (vec2: how far
+ * each vertex moves up to reach the bare skin, FLAT_HEIGHT, and the uncut wax
+ * mound; m), `moundNormal` (the mound's normals) and `palmUp` (the up
+ * direction those heights move along: +Y here, the palm's once laid on it).
  */
 export interface WoundGeometryInfo {
   geometry: THREE.BufferGeometry;
@@ -135,12 +144,38 @@ export function normaliseWound(source: THREE.BufferGeometry, length = WOUND_LENG
     bz.push(wp[w * 3 + 2]);
   }
   const inward = new Float32Array(welded);
+  const edgeDistance = new Float32Array(welded);
+  let edgeDistanceMax = 1e-9;
   for (let w = 0; w < welded; w++) {
     if (onBoundary[w] || bx.length === 0) continue;
     let best = Infinity;
     const x = wp[w * 3], z = wp[w * 3 + 2];
     for (let b = 0; b < bx.length; b++) best = Math.min(best, (bx[b] - x) ** 2 + (bz[b] - z) ** 2);
-    inward[w] = Math.min(Math.sqrt(best) / EDGE_BLEND, 1);
+    edgeDistance[w] = Math.sqrt(best);
+    edgeDistanceMax = Math.max(edgeDistanceMax, edgeDistance[w]);
+    inward[w] = Math.min(edgeDistance[w] / EDGE_BLEND, 1);
+  }
+
+  // The uncut wax mound: a smooth dome over the footprint, the rim's height
+  // on top, feathered to nothing at the edge.
+  const mound = new Float32Array(welded);
+  for (let w = 0; w < welded; w++) {
+    const t = Math.min(edgeDistance[w] / (edgeDistanceMax * MOUND_PLATEAU), 1);
+    mound[w] = rim * t * t * (3 - 2 * t);
+  }
+  // Its normals, from its triangles (per welded vertex, so seams stay smooth).
+  const mn = new Float64Array(welded * 3);
+  for (let t = 0; t < triangles; t++) {
+    const i0 = weld[tri(t * 3)], i1 = weld[tri(t * 3 + 1)], i2 = weld[tri(t * 3 + 2)];
+    const ax = wp[i1 * 3] - wp[i0 * 3], ay = mound[i1] - mound[i0], az = wp[i1 * 3 + 2] - wp[i0 * 3 + 2];
+    const bx2 = wp[i2 * 3] - wp[i0 * 3], by = mound[i2] - mound[i0], bz2 = wp[i2 * 3 + 2] - wp[i0 * 3 + 2];
+    let fx = ay * bz2 - az * by, fy = az * bx2 - ax * bz2, fz = ax * by - ay * bx2;
+    if (fy < 0) (fx = -fx), (fy = -fy), (fz = -fz); // the dome faces up, whatever the winding
+    for (const i of [i0, i1, i2]) {
+      mn[i * 3] += fx;
+      mn[i * 3 + 1] += fy;
+      mn[i * 3 + 2] += fz;
+    }
   }
 
   // Concavity: how far a vertex sits below its neighbours' average, along its normal.
@@ -205,8 +240,17 @@ export function normaliseWound(source: THREE.BufferGeometry, length = WOUND_LENG
   }
 
   const surf = new Float32Array(count * 4);
+  const shape = new Float32Array(count * 2);
+  const moundNormal = new Float32Array(count * 3);
+  const palmUp = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
     const w = weld[i];
+    shape[i * 2] = FLAT_HEIGHT - wp[w * 3 + 1];
+    shape[i * 2 + 1] = mound[w] - wp[w * 3 + 1];
+    const ml = Math.hypot(mn[w * 3], mn[w * 3 + 1], mn[w * 3 + 2]);
+    if (ml > 0) moundNormal.set([mn[w * 3] / ml, mn[w * 3 + 1] / ml, mn[w * 3 + 2] / ml], i * 3);
+    else moundNormal[i * 3 + 1] = 1;
+    palmUp[i * 3 + 1] = 1;
     pos.setXYZ(i, wp[w * 3], wp[w * 3 + 1], wp[w * 3 + 2]);
     const h = wp[w * 3 + 1];
     surf[i * 4] = h >= 0 ? (rim > 0 ? h / rim : 0) : cutDepth > 0 ? h / cutDepth : 0;
@@ -216,6 +260,9 @@ export function normaliseWound(source: THREE.BufferGeometry, length = WOUND_LENG
   }
   pos.needsUpdate = true;
   geometry.setAttribute('woundSurf', new THREE.BufferAttribute(surf, 4));
+  geometry.setAttribute('woundShape', new THREE.BufferAttribute(shape, 2));
+  geometry.setAttribute('moundNormal', new THREE.BufferAttribute(moundNormal, 3));
+  geometry.setAttribute('palmUp', new THREE.BufferAttribute(palmUp, 3));
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
 

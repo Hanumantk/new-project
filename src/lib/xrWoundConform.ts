@@ -22,6 +22,8 @@ export interface ConformSource {
   /** The wound in its own frame as loaded (metres): positions and normals. */
   restPositions: Float32Array;
   restNormals: Float32Array;
+  /** The build stages' mound normals as loaded (tilted like the normals, into the `moundNormal` attribute), if any. */
+  restMoundNormals?: Float32Array;
   /** Its half-size (m). */
   halfWidth: number;
   halfLength: number;
@@ -163,6 +165,9 @@ export function conformWound(
   const nor = geometry.getAttribute('normal') as THREE.BufferAttribute;
   const skinIndex = geometry.getAttribute('skinIndex') as THREE.BufferAttribute;
   const skinWeight = geometry.getAttribute('skinWeight') as THREE.BufferAttribute;
+  // The build stages move vertices along the palm's normal, and use the mound's normals tilted onto it.
+  const palmUp = geometry.getAttribute('palmUp') as THREE.BufferAttribute | undefined;
+  const moundNormal = wound.restMoundNormals ? (geometry.getAttribute('moundNormal') as THREE.BufferAttribute | undefined) : undefined;
   const weights = new Float32Array(MAX_BONES);
   const order: number[] = [];
   for (let i = 0; i < pos.count; i++) {
@@ -174,12 +179,17 @@ export function conformWound(
     // Onto the surface, raised along its normal by the wound's own height.
     pos.setXYZ(i, x + n.x * (y + lift), h + n.y * (y + lift), z + n.z * (y + lift));
     // Tilt the normal from flat (+Y) to the surface's.
-    v.fromArray(wound.restNormals, i * 3);
     k.set(n.z, 0, -n.x);
-    e1.crossVectors(k, v);
-    e2.crossVectors(k, e1);
-    v.add(e1).addScaledVector(e2, 1 / (1 + n.y)).normalize();
-    nor.setXYZ(i, v.x, v.y, v.z);
+    const tilt = (from: Float32Array, out: THREE.BufferAttribute) => {
+      v.fromArray(from, i * 3);
+      e1.crossVectors(k, v);
+      e2.crossVectors(k, e1);
+      v.add(e1).addScaledVector(e2, 1 / (1 + n.y)).normalize();
+      out.setXYZ(i, v.x, v.y, v.z);
+    };
+    tilt(wound.restNormals, nor);
+    if (moundNormal) tilt(wound.restMoundNormals!, moundNormal);
+    palmUp?.setXYZ(i, n.x, n.y, n.z);
 
     // Skin weights: those of the hand triangle under the vertex.
     const ix = Math.round(THREE.MathUtils.clamp((x - x0) / CELL, 0, nx - 1));
@@ -204,6 +214,8 @@ export function conformWound(
     }
   }
   pos.needsUpdate = nor.needsUpdate = skinIndex.needsUpdate = skinWeight.needsUpdate = true;
+  if (palmUp) palmUp.needsUpdate = true;
+  if (moundNormal) moundNormal.needsUpdate = true;
   geometry.computeBoundingSphere();
   return true;
 }
