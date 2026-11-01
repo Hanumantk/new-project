@@ -10,6 +10,9 @@ import { conformWound } from '../lib/xrWoundConform';
 import { SKIN_PRESETS, setAutoWorking, xrPrefs, type HandSide } from '../lib/xrPrefs';
 import { XRSkinSampler } from '../lib/xrSkinSampler';
 import { createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
+import { PINCH_RANGE, StageFlow } from '../lib/woundSteps';
+import { LABEL_WIDTH, StageLabel } from '../lib/xrStageLabel';
+import { COLORS } from '../mat/xr/text';
 
 const WOUND_URL = `${import.meta.env.BASE_URL}models/Wound.glb`;
 
@@ -25,6 +28,14 @@ export const ANGLE_DEG = 35;
 export const OFFSET_MM = 0.5;
 /** …and moved on the palm (mm): [towards the thumb, towards the fingers], from the metacarpals' centre (their joints sit at the base of the palm). */
 export const PALM_OFFSET_MM: readonly [number, number] = [0, 20];
+
+/** The stage label: this far (m) beside the wound's edge, on the thumb side as you see it, and this far above the palm. */
+export const LABEL_GAP = 0.04;
+export const LABEL_LIFT = 0.012;
+/** The ring shown at the wound while the other hand is in pinch range: radius and line width (m), lift above the palm. */
+const RING_RADIUS = 0.014;
+const RING_WIDTH = 0.0018;
+const RING_LIFT = 0.004;
 
 /** How often the palm's colour is read from the camera, when allowed (s). */
 const SKIN_SAMPLE_SECONDS = 0.5;
@@ -210,6 +221,8 @@ export function XRWound({ strength }: XRWoundProps) {
         // The flat wound as loaded, kept to lay it onto the hand afresh at each bind.
         loaded.geometry.userData.restPositions = (loaded.geometry.getAttribute('position').array as Float32Array).slice();
         loaded.geometry.userData.restNormals = (loaded.geometry.getAttribute('normal').array as Float32Array).slice();
+        loaded.geometry.userData.restMoundNormals = (loaded.geometry.getAttribute('moundNormal').array as Float32Array).slice();
+        material.userData.uniforms.uHalf.value.set(loaded.halfWidth, loaded.halfLength);
         setInfo(loaded);
       })
       .catch((error) => console.error('Could not load the wound model', error));
@@ -227,7 +240,7 @@ export function XRWound({ strength }: XRWoundProps) {
       cancelled = true;
       loaded?.geometry.dispose();
     };
-  }, []);
+  }, [material]);
   useEffect(() => () => material.dispose(), [material]);
 
   // The hand model, as a left and a right hand.
@@ -296,8 +309,35 @@ export function XRWound({ strength }: XRWoundProps) {
     return o;
   }, [info, material]);
 
+  // The build stages' label, and the ring that shows a pinch would count.
+  const extras = useMemo(() => {
+    const label = new StageLabel();
+    label.setStage(0);
+    const ringMaterial = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(RING_RADIUS - RING_WIDTH / 2, RING_RADIUS + RING_WIDTH / 2, 48).rotateX(-Math.PI / 2),
+      ringMaterial,
+    );
+    ring.renderOrder = 19;
+    ring.visible = false;
+    return { label, ring, ringMaterial, ringIdle: new THREE.Color(COLORS.label), ringPinch: new THREE.Color(COLORS.mint) };
+  }, []);
+  useEffect(
+    () => () => {
+      extras.label.dispose();
+      extras.ring.geometry.dispose();
+      extras.ringMaterial.dispose();
+    },
+    [extras],
+  );
+
   const state = useMemo(
     () => ({
+      flow: new StageFlow(),
+      pinchPoint: new THREE.Vector3(),
+      right: new THREE.Vector3(),
+      axis: new THREE.Vector3(),
+      headTurn: new THREE.Quaternion(),
       reader: new PalmFrameReader(),
       frame: { point: new THREE.Vector3(), quaternion: new THREE.Quaternion() } as PalmFrame,
       placed: false,
@@ -319,8 +359,8 @@ export function XRWound({ strength }: XRWoundProps) {
   );
 
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, hands, findHand, prefs: xrPrefs, scene };
-  }, [state, mesh, hands, findHand, scene]);
+    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, hands, findHand, prefs: xrPrefs, scene, extras };
+  }, [state, mesh, hands, findHand, scene, extras]);
 
   useFrame((_, delta) => {
     if (!mesh || !hands) return;
@@ -390,11 +430,67 @@ export function XRWound({ strength }: XRWoundProps) {
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;
     material.opacity = opacity;
     mesh.visible = opacity > 0;
+    stepStages(delta, opacity);
     // The hand model: hides the wound behind the real hand; its wireframe on request.
     model.root.visible = mesh.visible || (xrPrefs.showHandMesh && tracked);
     model.occluder.visible = mesh.visible;
     model.wire.visible = xrPrefs.showHandMesh;
   });
+
+  /**
+   * The build stages: a pinch of the other hand near the wound steps them;
+   * the stage drives the wound's own shape and look, so it stays exactly in
+   * the wound's place. A ring at the wound shows a pinch would count, and a
+   * label beside it says what the stage is.
+   */
+  function stepStages(delta: number, opacity: number) {
+    const { flow, pinchPoint } = state;
+    const shown = opacity > 0;
+    const other = findHand(xrPrefs.hand === 'left' ? 'right' : 'left');
+    const thumb = other?.joints['thumb-tip'];
+    const index = other?.joints['index-finger-tip'];
+    let distance: number | null = null;
+    let inRange = false;
+    if (thumb?.visible && index?.visible) {
+      distance = thumb.position.distanceTo(index.position);
+      pinchPoint.addVectors(thumb.position, index.position).multiplyScalar(0.5);
+      inRange = shown && pinchPoint.distanceTo(state.frame.point) < PINCH_RANGE;
+    }
+    if (flow.update(delta, distance, inRange)) extras.label.setStage(flow.stage);
+    const u = material.userData.uniforms;
+    u.uStage.value = flow.stage;
+    u.uStageFrom.value = flow.from;
+    u.uStageBlend.value = flow.blend;
+
+    const r = state.reader;
+    const { ring, label } = extras;
+    ring.visible = inRange;
+    if (inRange) {
+      ring.position.copy(state.frame.point).addScaledVector(r.normal, RING_LIFT);
+      ring.quaternion.copy(state.frame.quaternion);
+      const pinching = flow.armed && distance !== null;
+      extras.ringMaterial.color.copy(pinching ? extras.ringPinch : extras.ringIdle);
+      extras.ringMaterial.opacity = opacity * (pinching ? 0.95 : 0.5);
+    }
+
+    label.setOpacity(opacity);
+    if (!shown) return;
+    // Beside the wound, on the thumb side as the viewer sees it: past the wound's own extent that way, so it never covers it.
+    const camera = gl.xr.isPresenting ? gl.xr.getCamera() : null;
+    if (!camera) return;
+    state.right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    const side = r.across.dot(state.right) >= 0 ? 1 : -1;
+    const s = mesh!.scale.x;
+    const extent =
+      Math.abs(state.axis.set(0, 0, 1).applyQuaternion(state.frame.quaternion).dot(state.right)) * info!.halfLength * s +
+      Math.abs(state.axis.set(1, 0, 0).applyQuaternion(state.frame.quaternion).dot(state.right)) * info!.halfWidth * s;
+    label.group.position
+      .copy(state.frame.point)
+      .addScaledVector(state.right, side * (extent + LABEL_GAP + LABEL_WIDTH / 2))
+      .addScaledVector(r.normal, LABEL_LIFT);
+    // Turned like the head, so it reads upright however the palm is held.
+    label.group.quaternion.copy(camera.getWorldQuaternion(state.headTurn));
+  }
 
   /** Lays the wound onto the hand model's palm skin as it is this frame and binds it to the model's bones. */
   function bind(skinned: THREE.SkinnedMesh, model: XRHandModel): boolean {
@@ -414,6 +510,7 @@ export function XRWound({ strength }: XRWoundProps) {
       {
         restPositions: g.userData.restPositions as Float32Array,
         restNormals: g.userData.restNormals as Float32Array,
+        restMoundNormals: g.userData.restMoundNormals as Float32Array,
         halfWidth: info!.halfWidth,
         halfLength: info!.halfLength,
       },
@@ -440,6 +537,8 @@ export function XRWound({ strength }: XRWoundProps) {
       {hands && <primitive object={hands.left.root} />}
       {hands && <primitive object={hands.right.root} />}
       {mesh && <primitive object={mesh} />}
+      <primitive object={extras.ring} />
+      <primitive object={extras.label.group} />
     </>
   );
 }
