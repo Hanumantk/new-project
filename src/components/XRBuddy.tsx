@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   BUDDY_SCALE,
   GROWTH,
@@ -13,6 +12,7 @@ import {
   hoverPoint,
   type Expression,
 } from '../lib/buddy';
+import { studioEnvironment } from '../lib/studioEnvironment';
 import { woundTarget } from '../lib/woundStages';
 
 const BUDDY_URL = `${import.meta.env.BASE_URL}models/buddy.glb`;
@@ -101,22 +101,21 @@ export function XRBuddy({ active }: { active: boolean }) {
     return group;
   }, []);
   // Soft studio reflections, as in Buddy's reference render (the room's light alone leaves it dull).
+  // Made when the scene mounts, before the session (see studioEnvironment); Buddy may load later.
+  const envMap = useRef<THREE.Texture | null>(null);
+  useEffect(() => {
+    envMap.current = studioEnvironment(gl);
+  }, [gl]);
   useEffect(() => {
     if (!rig) return;
-    const pmrem = new THREE.PMREMGenerator(gl);
-    const room = new RoomEnvironment();
-    const envMap = pmrem.fromScene(room, 0.04).texture;
-    room.dispose();
-    pmrem.dispose();
     rig.root.traverse((o) => {
       const material = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
       if (!(o as THREE.Mesh).isMesh || !material || material === rig.face) return;
-      material.envMap = envMap;
+      material.envMap = envMap.current;
       material.envMapIntensity = ENV_INTENSITY;
       material.needsUpdate = true;
     });
-    return () => envMap.dispose();
-  }, [rig, gl]);
+  }, [rig]);
 
   useEffect(() => {
     if (!rig) return;
@@ -175,7 +174,19 @@ export function XRBuddy({ active }: { active: boolean }) {
     if (import.meta.env.DEV) (window as unknown as { __buddy?: unknown }).__buddy = { rig, state, holder };
   }, [rig, state, holder]);
 
+  // One frame of Buddy. If it ever fails, Buddy hides and stops: it must never stop the wound or the panels.
+  const broken = useRef(false);
   useFrame((_, delta) => {
+    if (broken.current) return;
+    try {
+      frame(delta);
+    } catch (error) {
+      broken.current = true;
+      holder.visible = false;
+      console.error('Buddy stopped', error);
+    }
+  });
+  function frame(delta: number) {
     if (!rig) return;
     holder.visible = active;
     if (!active) return;
@@ -301,7 +312,7 @@ export function XRBuddy({ active }: { active: boolean }) {
     }
 
     rig.mixer.update(dt);
-  });
+  }
 
   return <primitive object={holder} />;
 }

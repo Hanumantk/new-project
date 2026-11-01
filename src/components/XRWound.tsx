@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
 import { PinchDetector } from '../mat/lib/pinch';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
+import { studioEnvironment } from '../lib/studioEnvironment';
 import { STAGE_COUNT, STAGE_URLS, isPinchAtWound, nextStep, stepLabel, woundTarget } from '../lib/woundStages';
 import { XRHandModel, prepareHandModel } from '../lib/xrHandModel';
 import { applyPalmSurface, buildPalmSurface } from '../lib/xrWoundConform';
@@ -310,6 +310,8 @@ export function XRWound({ strength }: XRWoundProps) {
   const findHand = useHandSpaces();
   const [info, setInfo] = useState<WoundGeometryInfo | null>(null);
   const [stages, setStages] = useState<Stage[]>([]);
+  const env = useRef<THREE.Texture | null>(null);
+  const stageMaterials = useRef<THREE.MeshStandardMaterial[]>([]);
   const [handSource, setHandSource] = useState<THREE.SkinnedMesh | null>(null);
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
@@ -386,19 +388,17 @@ export function XRWound({ strength }: XRWoundProps) {
 
   // Soft studio reflections for the wet blood (or the room's own, if the
   // session estimates the real light).
+  // Runs once, when the scene mounts: never again mid-session (see studioEnvironment).
   useEffect(() => {
-    const pmrem = new THREE.PMREMGenerator(gl);
-    const room = new RoomEnvironment();
-    const envMap = pmrem.fromScene(room, 0.04).texture;
+    const envMap = studioEnvironment(gl);
     const setEnv = (map: THREE.Texture | null) => {
-      for (const m of [material, ...stages.map((stage) => stage.material)]) {
+      env.current = map;
+      for (const m of [material, ...stageMaterials.current]) {
         m.envMap = map;
         m.needsUpdate = true;
       }
     };
     setEnv(envMap);
-    room.dispose();
-    pmrem.dispose();
 
     const estimated = new XREstimatedLight(gl);
     const ownLights: THREE.Light[] = [];
@@ -424,9 +424,16 @@ export function XRWound({ strength }: XRWoundProps) {
       estimated.removeEventListener('estimationend', onEnd);
       onEnd();
       estimated.dispose();
-      envMap.dispose();
     };
-  }, [gl, scene, material, stages]);
+  }, [gl, scene, material]);
+  // The stages arrive later: they take whichever reflections are current.
+  useEffect(() => {
+    stageMaterials.current = stages.map((stage) => stage.material);
+    for (const m of stageMaterials.current) {
+      m.envMap = env.current;
+      m.needsUpdate = true;
+    }
+  }, [stages]);
 
   // The wound, parented to the scene (never to the hand).
   const mesh = useMemo(() => {
@@ -484,6 +491,7 @@ export function XRWound({ strength }: XRWoundProps) {
       pinch: new PinchDetector(),
       pinchPoint: new THREE.Vector3(),
       hinted: false,
+      stagesBroken: false,
       /** How long the wound has been on show (s). */
       shownFor: 0,
       eye: new THREE.Vector3(),
@@ -572,19 +580,16 @@ export function XRWound({ strength }: XRWoundProps) {
     }
     const fade = state.lostFor <= HOLD_SECONDS ? 1 : 1 - (state.lostFor - HOLD_SECONDS) / FADE_SECONDS;
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;
-    // Step through the stages: a pinch by the other hand, at the wound.
-    const otherHand = findHand(xrPrefs.hand === 'left' ? 'right' : 'left');
-    const thumb = otherHand?.joints['thumb-tip'];
-    const index = otherHand?.joints['index-finger-tip'];
-    const wrist = otherHand?.joints.wrist;
-    const otherTracked = !!(wrist?.visible && thumb && index);
-    const pinchEvent = state.pinch.update(otherTracked ? thumb!.position.distanceTo(index!.position) : null, delta);
-    state.shownFor = opacity > 0 ? state.shownFor + delta : 0;
-    if (pinchEvent === 'start' && otherTracked && stageMeshes.length > 0 && state.shownFor > PINCH_SETTLE_SECONDS) {
-      state.pinchPoint.addVectors(thumb!.position, index!.position).multiplyScalar(0.5);
-      if (isPinchAtWound(state.pinchPoint)) {
-        state.step = nextStep(state.step);
-        label.show(state.step);
+    // Step through the stages: a pinch by the other hand, at the wound. (Guarded: the stages
+    // and their label are extras, and must never stop the wound itself.)
+    if (!state.stagesBroken) {
+      try {
+        stepStages(delta, opacity);
+      } catch (error) {
+        state.stagesBroken = true;
+        state.step = 0;
+        label.mesh.visible = false;
+        console.error('Wound stages stopped', error);
       }
     }
     woundTarget.visible = opacity > 0;
@@ -599,6 +604,29 @@ export function XRWound({ strength }: XRWoundProps) {
       (o.material as THREE.MeshStandardMaterial).opacity = opacity;
     });
     const shown = opacity > 0;
+    // The hand model: hides the wound behind the real hand; its wireframe on request.
+    model.root.visible = shown || (xrPrefs.showHandMesh && tracked);
+    model.occluder.visible = shown;
+    model.wire.visible = xrPrefs.showHandMesh;
+  });
+
+  /** The other hand's pinch at the wound, and the label naming the step. */
+  function stepStages(delta: number, opacity: number) {
+    const otherHand = findHand(xrPrefs.hand === 'left' ? 'right' : 'left');
+    const thumb = otherHand?.joints['thumb-tip'];
+    const index = otherHand?.joints['index-finger-tip'];
+    const wrist = otherHand?.joints.wrist;
+    const otherTracked = !!(wrist?.visible && thumb && index);
+    const pinchEvent = state.pinch.update(otherTracked ? thumb!.position.distanceTo(index!.position) : null, delta);
+    state.shownFor = opacity > 0 ? state.shownFor + delta : 0;
+    if (pinchEvent === 'start' && otherTracked && stageMeshes.length > 0 && state.shownFor > PINCH_SETTLE_SECONDS) {
+      state.pinchPoint.addVectors(thumb!.position, index!.position).multiplyScalar(0.5);
+      if (isPinchAtWound(state.pinchPoint)) {
+        state.step = nextStep(state.step);
+        label.show(state.step);
+      }
+    }
+    const shown = opacity > 0;
     if (shown && !state.hinted && stageMeshes.length > 0) {
       state.hinted = true;
       label.show(state.step, FIRST_HINT_SECONDS);
@@ -608,11 +636,7 @@ export function XRWound({ strength }: XRWoundProps) {
     head.getWorldQuaternion(state.headQuaternion);
     state.headUp.set(0, 1, 0).applyQuaternion(state.headQuaternion);
     label.update(delta, state.frame.point, state.eye, state.headUp, shown ? 1 : 0);
-    // The hand model: hides the wound behind the real hand; its wireframe on request.
-    model.root.visible = shown || (xrPrefs.showHandMesh && tracked);
-    model.occluder.visible = shown;
-    model.wire.visible = xrPrefs.showHandMesh;
-  });
+  }
 
   /** Lays the wound and its stages onto the hand model's palm skin as it is this frame and binds them to the model's bones. */
   function bind(skinned: THREE.SkinnedMesh, model: XRHandModel): boolean {
@@ -643,16 +667,27 @@ export function XRWound({ strength }: XRWoundProps) {
     // A new skeleton on the model's bones, so its inverses capture this exact pose.
     const old = skinned.skeleton;
     const skeleton = new THREE.Skeleton(model.bones);
-    for (const o of [skinned, ...(stageMeshes as unknown as THREE.SkinnedMesh[])]) {
-      if (o !== skinned) {
-        o.position.copy(skinned.position);
-        o.quaternion.copy(skinned.quaternion);
-        o.scale.copy(skinned.scale);
-        o.updateMatrixWorld(true);
-      }
+    const layOn = (o: THREE.SkinnedMesh) => {
       const g = o.geometry;
       applyPalmSurface(surface, { restPositions: g.userData.restPositions, restNormals: g.userData.restNormals }, lift, g);
       o.bind(skeleton, o.matrixWorld);
+    };
+    layOn(skinned);
+    // The stages follow the wound; a failure with them must never cost the wound itself.
+    if (!state.stagesBroken) {
+      try {
+        for (const o of stageMeshes as unknown as THREE.SkinnedMesh[]) {
+          o.position.copy(skinned.position);
+          o.quaternion.copy(skinned.quaternion);
+          o.scale.copy(skinned.scale);
+          o.updateMatrixWorld(true);
+          layOn(o);
+        }
+      } catch (error) {
+        state.stagesBroken = true;
+        state.step = 0;
+        console.error('Wound stages stopped', error);
+      }
     }
     state.boundStages = stageMeshes.length;
     old?.dispose();
