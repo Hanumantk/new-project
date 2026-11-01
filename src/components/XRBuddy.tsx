@@ -227,6 +227,7 @@ export function XRBuddy({ active }: { active: boolean }) {
         wound: null,
         watchWound: false,
         facingViewer: false,
+        expressive: false,
         idle: false,
       } as MotionInput,
       headTurn: new THREE.Quaternion(),
@@ -375,6 +376,9 @@ export function XRBuddy({ active }: { active: boolean }) {
     input.wound = link.placed ? link.point : null;
     input.watchWound = link.otherInRange;
     input.facingViewer = bubble.hasMessage && !motion.asleep;
+    // Any expression faces the viewer: a reaction, talking, an occasion's clip, or curiosity at a coming pinch.
+    input.expressive =
+      !motion.asleep && (state.eventFor > 0 || (bubble.typing && bubble.hasMessage) || !!state.current || link.otherInRange);
     input.idle = !state.current && !bubble.typing && !state.pending && link.tracked;
     if (!state.entered) {
       // Session start: fly in from the side of the view (the hand's side, if known).
