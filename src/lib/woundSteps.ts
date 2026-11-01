@@ -8,12 +8,19 @@ import { PinchDetector } from '../mat/lib/pinch';
  */
 export const STAGE_COUNT = 6;
 
-/** A pinch only counts within this distance of the wound's centre (m). */
+/** A pinch only counts within this distance of the wound's centre (m), at any moment while it's held. */
 export const PINCH_RANGE = 0.12;
-/** Pinch and hold this long (s) to go back one stage. */
-export const HOLD_BACK_SECONDS = 0.8;
-/** After a step, pinches are ignored this long (s): one pinch = one step. */
-export const STEP_COOLDOWN = 0.6;
+/**
+ * The stage pinch: thumb-to-index tip distance (m) that starts and ends it.
+ * Looser than the mat's: the headset reports the tip joints inside the
+ * fingertips, so a real pinch bottoms out around 1.5–2 cm.
+ */
+export const STAGE_PINCH_START = 0.02;
+export const STAGE_PINCH_END = 0.03;
+/** A pinch survives the hand's tracking dropping out this long (s): reaching over the palm often hides a hand briefly. */
+export const STAGE_PINCH_GRACE = 1;
+/** After a step, a release is ignored this long (s), against tracking jitter. */
+export const STEP_COOLDOWN = 0.25;
 /** A step's shape and look blend over this long (s)… */
 export const TRANSITION_SECONDS = 0.4;
 /** …and the cut opening (stage 2 → 3) over this long. */
@@ -29,56 +36,43 @@ export const STAGE_LABELS: readonly string[] = [
   '6/6 · Shade the lips with dark brown for depth and let the blood dry a little.',
 ];
 
-/** Stage state and the pinch gesture that drives it. */
+/** Stage state and the pinch gesture that drives it: every pinch near the wound steps forward, round the loop. */
 export class StageFlow {
   /** The stage shown (0 = finished wound, 1…STAGE_COUNT). */
   stage = 0;
   /** The stage it's blending from, and how far (0..1). */
   from = 0;
   blend = 1;
-  /** A pinch that began in range is under way. */
+  /** The pinch under way has been near the wound. */
   armed = false;
   private duration = TRANSITION_SECONDS;
   private cooldown = 0;
-  private holdFor = 0;
-  private heldBack = false;
-  private readonly pinch = new PinchDetector();
+  private readonly pinch = new PinchDetector(STAGE_PINCH_START, STAGE_PINCH_END, STAGE_PINCH_GRACE);
+
+  get pinching() {
+    return this.pinch.pinching;
+  }
 
   /**
    * @param pinchDistance the other hand's thumb-to-index tip distance (m), or null when it isn't tracked.
-   * @param inRange whether its pinch point is within PINCH_RANGE of the shown wound.
+   * @param inRange whether its pinch point is within PINCH_RANGE of the wound.
    * @returns whether the stage changed.
    */
   update(dt: number, pinchDistance: number | null, inRange: boolean): boolean {
     this.blend = Math.min(this.blend + dt / this.duration, 1);
     this.cooldown = Math.max(this.cooldown - dt, 0);
     const event = this.pinch.update(pinchDistance, dt);
-    let changed = false;
-    if (event === 'start') {
-      this.armed = inRange && this.cooldown === 0;
-      this.holdFor = 0;
-      this.heldBack = false;
-    } else if (event === 'end') {
-      // A tap advances; not after a hold, nor when the release is the hand being lost.
-      if (this.armed && !this.heldBack && pinchDistance !== null && this.cooldown === 0) {
-        changed = this.go((this.stage + 1) % (STAGE_COUNT + 1));
-      }
-      this.armed = false;
-    } else if (this.pinch.pinching && this.armed && !this.heldBack) {
-      this.holdFor += Math.min(dt, 0.1); // a hitch in the frames is not a hold
-      if (this.holdFor >= HOLD_BACK_SECONDS) {
-        this.heldBack = true;
-        if (this.stage > 0) changed = this.go(this.stage - 1);
-      }
-    }
-    return changed;
-  }
-
-  private go(stage: number): boolean {
+    if (event === 'start') this.armed = inRange;
+    else if (this.pinch.pinching && inRange) this.armed = true;
+    if (event !== 'end') return false;
+    // Released (or the hand stayed lost past the grace): one step forward.
+    const step = this.armed && this.cooldown === 0;
+    this.armed = false;
+    if (!step) return false;
     this.from = this.stage;
-    this.stage = stage;
+    this.stage = (this.stage + 1) % (STAGE_COUNT + 1);
     this.blend = 0;
-    this.duration = this.from === 2 && stage === 3 ? CUT_OPEN_SECONDS : TRANSITION_SECONDS;
+    this.duration = this.from === 2 && this.stage === 3 ? CUT_OPEN_SECONDS : TRANSITION_SECONDS;
     this.cooldown = STEP_COOLDOWN;
     return true;
   }

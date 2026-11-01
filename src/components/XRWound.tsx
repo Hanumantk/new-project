@@ -454,7 +454,8 @@ export function XRWound({ strength }: XRWoundProps) {
     if (thumb?.visible && index?.visible) {
       distance = thumb.position.distanceTo(index.position);
       pinchPoint.addVectors(thumb.position, index.position).multiplyScalar(0.5);
-      inRange = shown && pinchPoint.distanceTo(state.frame.point) < PINCH_RANGE;
+      // Against where the wound last was: the pinching hand can hide the wound's hand for a moment.
+      inRange = state.placed && pinchPoint.distanceTo(state.frame.point) < PINCH_RANGE;
     }
     if (flow.update(delta, distance, inRange)) extras.label.setStage(flow.stage);
     const u = material.userData.uniforms;
@@ -464,11 +465,11 @@ export function XRWound({ strength }: XRWoundProps) {
 
     const r = state.reader;
     const { ring, label } = extras;
-    ring.visible = inRange;
-    if (inRange) {
+    ring.visible = inRange && shown;
+    if (ring.visible) {
       ring.position.copy(state.frame.point).addScaledVector(r.normal, RING_LIFT);
       ring.quaternion.copy(state.frame.quaternion);
-      const pinching = flow.armed && distance !== null;
+      const pinching = flow.pinching && flow.armed;
       extras.ringMaterial.color.copy(pinching ? extras.ringPinch : extras.ringIdle);
       extras.ringMaterial.opacity = opacity * (pinching ? 0.95 : 0.5);
     }
