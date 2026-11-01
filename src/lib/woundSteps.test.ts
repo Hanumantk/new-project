@@ -17,14 +17,14 @@ describe('StageFlow', () => {
     expect(new StageFlow().stage).toBe(0);
   });
 
-  it('steps 0 → 1 … 5 → 0, one stage per tap', () => {
+  it('steps 0 → 1 … 6 → 0, one stage per tap', () => {
     const flow = new StageFlow();
     const seen = [flow.stage];
     for (let i = 0; i < STAGE_COUNT + 1; i++) {
       tap(flow);
       seen.push(flow.stage);
     }
-    expect(seen).toEqual([0, 1, 2, 3, 4, 5, 0]);
+    expect(seen).toEqual([0, 1, 2, 3, 4, 5, 6, 0]);
   });
 
   it('fires on release, not on the pinch itself', () => {

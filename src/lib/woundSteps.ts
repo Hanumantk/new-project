@@ -6,7 +6,7 @@ import { PinchDetector } from '../mat/lib/pinch';
  * stages are the same wound mesh with a different shape and look (see
  * xrWoundMaterial.ts), so they sit exactly where the wound is.
  */
-export const STAGE_COUNT = 5;
+export const STAGE_COUNT = 6;
 
 /** A pinch only counts within this distance of the wound's centre (m). */
 export const PINCH_RANGE = 0.12;
@@ -21,11 +21,12 @@ export const CUT_OPEN_SECONDS = 0.8;
 
 export const STAGE_LABELS: readonly string[] = [
   'Pinch near the wound with your other hand to see how it’s made',
-  '1/5 · Clean the skin and apply a thin line of spirit gum. Wait until tacky.',
-  '2/5 · Press a marble-sized ball of scar wax on and blend the edges into the skin.',
-  '3/5 · Slice the wax with a spatula and push the edges apart. Seal with latex and powder.',
-  '4/5 · Match the wax to your skin, paint deep red into the cut, add bruising around it.',
-  '5/5 · Fill the cut with thick blood, stipple around it and add a few drips.',
+  '1/6 · Clean the skin and apply a thin line of spirit gum. Wait until tacky.',
+  '2/6 · Press a marble-sized ball of scar wax on and blend the edges into the skin.',
+  '3/6 · Slice the wax with a spatula and push the edges apart. Seal with latex and powder.',
+  '4/6 · Match the wax to your skin, paint deep red into the cut, add bruising around it.',
+  '5/6 · Fill the cut with thick blood, stipple around it and add a few drips.',
+  '6/6 · Shade the lips with dark brown for depth and let the blood dry a little.',
 ];
 
 /** Stage state and the pinch gesture that drives it. */
