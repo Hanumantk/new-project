@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
-import { GLASS_FONT, GLASS_TEXT, GLASS_TEXT_MUTED, drawGlassPanel } from '../lib/glassCanvas';
 import { PinchDetector } from '../mat/lib/pinch';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
 import { STAGE_COUNT, STAGE_URLS, isPinchAtWound, nextStep, stepLabel, woundTarget } from '../lib/woundStages';
@@ -239,7 +238,7 @@ const FIRST_HINT_SECONDS = 5;
 const LABEL_W = 0.12;
 const LABEL_H = 0.035;
 
-/** A small glass label above the wound naming the step shown. */
+/** A small label above the wound naming the step shown (in the style of the headset's hint). */
 class StepLabel {
   readonly mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   private readonly canvas = document.createElement('canvas');
@@ -264,13 +263,16 @@ class StepLabel {
     const ctx = this.canvas.getContext('2d')!;
     const { width: w, height: h } = this.canvas;
     ctx.clearRect(0, 0, w, h);
-    drawGlassPanel(ctx, 4, 4, w - 8, h - 8, 70);
+    ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
+    ctx.beginPath();
+    ctx.roundRect(4, 4, w - 8, h - 8, 70);
+    ctx.fill();
     ctx.textAlign = 'center';
-    ctx.fillStyle = GLASS_TEXT;
-    ctx.font = `600 84px ${GLASS_FONT}`;
+    ctx.fillStyle = '#1f2a24';
+    ctx.font = '600 84px "DM Sans", system-ui, sans-serif';
     ctx.fillText(title, w / 2, 128);
-    ctx.fillStyle = GLASS_TEXT_MUTED;
-    ctx.font = `500 50px ${GLASS_FONT}`;
+    ctx.fillStyle = '#5d6762';
+    ctx.font = '500 50px "DM Sans", system-ui, sans-serif';
     ctx.fillText(detail, w / 2, 210);
     this.texture.needsUpdate = true;
     this.showFor = seconds;
