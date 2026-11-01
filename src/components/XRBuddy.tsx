@@ -1,0 +1,462 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import * as THREE from 'three';
+import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import {
+  BUDDY_COLOR,
+  BUDDY_SCALE,
+  BUDDY_SIZE_CM,
+  DEADBAND,
+  GROWTH,
+  GROWTH_TARGETS,
+  MAX_TILT_DEG,
+  NO_BLINK,
+  TURN_SECONDS,
+  buddyTarget,
+  expressionOffset,
+  growthForStage,
+  springStep,
+  type Expression,
+} from '../lib/buddy';
+import { STAGE_COUNT, STAGE_LABELS, woundLink } from '../lib/woundSteps';
+import { SpeechBubble } from '../lib/xrSpeechBubble';
+
+const BUDDY_URL = `${import.meta.env.BASE_URL}models/buddy_character.glb`;
+
+/** What Buddy says on its own occasions (the stage instructions are STAGE_LABELS). */
+export const BUDDY_LINES = {
+  hello: 'Hi! I’m Buddy. Pinch near the wound with your other hand to see how it’s made.',
+  closer: 'Pinch a little closer to the wound.',
+  done: 'You did it! That’s the full wound.',
+};
+
+/** Idle_Float's weight: the only animation that always plays, kept gentle. */
+const IDLE_WEIGHT = 0.6;
+/** Cross-fades between clips (s). */
+const FADE = 0.3;
+/** With the wound hand lost this long (s), Buddy dozes off. */
+const SLEEP_AFTER = 8;
+/** The hand counts as lost (Buddy waits in front of the eyes) after this long without it (s). */
+const LOST_AFTER = 0.5;
+/** Blinks: this long (s), every 2.2–5.2 s; talking flips the mouth every TALK_FLIP s. */
+const BLINK_SECONDS = 0.12;
+const TALK_FLIP = 0.14;
+/** The flower grows a stage over this long (s). */
+const GROW_SECONDS = 1;
+/** A passing line ("closer") stays this long after typing (s), then the current instruction returns. */
+const PASSING_SECONDS = 3.5;
+/** The bubble's gap beside Buddy (m), and how far Buddy must cross the wound before it changes side (m). */
+const BUBBLE_GAP = 0.012;
+const SIDE_SWITCH = 0.02;
+const ENV_INTENSITY = 0.35;
+
+type Clip = 'Idle_Float' | 'Wave' | 'Happy_Bounce' | 'Excited' | 'Sleepy' | 'Nod_Yes' | 'Shake_No';
+
+interface BuddyRig {
+  root: THREE.Object3D;
+  mixer: THREE.AnimationMixer;
+  actions: Map<Clip, THREE.AnimationAction>;
+  face: THREE.MeshStandardMaterial | null;
+  sprouts: THREE.Mesh[];
+  materials: THREE.MeshStandardMaterial[];
+}
+
+function makeRig(gltf: GLTF): BuddyRig {
+  const root = gltf.scene;
+  const mixer = new THREE.AnimationMixer(root);
+  const actions = new Map<Clip, THREE.AnimationAction>();
+  for (const clip of gltf.animations) actions.set(clip.name as Clip, mixer.clipAction(clip));
+  let face: THREE.MeshStandardMaterial | null = null;
+  const sprouts: THREE.Mesh[] = [];
+  const materials: THREE.MeshStandardMaterial[] = [];
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.frustumCulled = false;
+    const material = mesh.material as THREE.MeshStandardMaterial;
+    if (material.name === 'MAT_Buddy_Face') {
+      // A decal just above the body: drawn after it, without writing depth. Its own copy of the atlas, to move per expression.
+      face = material;
+      material.depthWrite = false;
+      if (material.map) {
+        material.map = material.map.clone();
+        material.map.needsUpdate = true;
+      }
+      mesh.renderOrder = 6;
+    } else {
+      mesh.renderOrder = 5;
+      if (!materials.includes(material)) materials.push(material);
+      if (material.name === 'MAT_Buddy_Body') material.color.set(BUDDY_COLOR);
+    }
+    if (mesh.morphTargetDictionary && GROWTH_TARGETS.every((name) => name in mesh.morphTargetDictionary!)) sprouts.push(mesh);
+  });
+  return { root, mixer, actions, face, sprouts, materials };
+}
+
+/**
+ * Buddy in the headset: floats beside the wound hand (never in front of the
+ * wound, always in view), faces the viewer and speaks the step flow's
+ * instructions in a speech bubble. Idle_Float, gently, is its only constant
+ * motion; every other clip plays on an occasion (hello, the flow starting,
+ * each stage, a near miss, the flow done, dozing off). Its flower grows with
+ * the stages. Reads the wound through `woundLink`; never stops the wound:
+ * any error hides Buddy instead.
+ */
+export function XRBuddy({ active }: { active: boolean }) {
+  const [rig, setRig] = useState<BuddyRig | null>(null);
+  const gl = useThree((s) => s.gl);
+
+  useEffect(() => {
+    let cancelled = false;
+    new GLTFLoader()
+      .loadAsync(BUDDY_URL)
+      .then((gltf) => {
+        if (!cancelled) setRig(makeRig(gltf));
+      })
+      .catch((error) => console.error('Could not load Buddy', error));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const holder = useMemo(() => {
+    const group = new THREE.Group();
+    group.visible = false;
+    return group;
+  }, []);
+  const bubble = useMemo(() => new SpeechBubble(STAGE_COUNT), []);
+  useEffect(() => () => bubble.dispose(), [bubble]);
+
+  // Soft studio reflections (the room's light alone leaves Buddy dull), made once when the scene mounts, before any session.
+  const envMap = useRef<THREE.Texture | null>(null);
+  useEffect(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const room = new RoomEnvironment();
+    const texture = pmrem.fromScene(room, 0.04).texture;
+    room.dispose();
+    pmrem.dispose();
+    envMap.current = texture;
+    return () => texture.dispose();
+  }, [gl]);
+
+  useEffect(() => {
+    if (!rig) return;
+    for (const material of rig.materials) {
+      material.envMap = envMap.current;
+      material.envMapIntensity = ENV_INTENSITY;
+      material.needsUpdate = true;
+    }
+    rig.root.scale.setScalar(BUDDY_SCALE);
+    holder.add(rig.root);
+    const idle = rig.actions.get('Idle_Float');
+    if (idle) {
+      idle.weight = IDLE_WEIGHT;
+      idle.play();
+    }
+    return () => {
+      holder.remove(rig.root);
+      rig.mixer.stopAllAction();
+    };
+  }, [rig, holder]);
+
+  const state = useMemo(
+    () => ({
+      broken: false,
+      placed: false,
+      greeted: false,
+      started: false,
+      asleep: false,
+      lostFor: Infinity,
+      steps: 0,
+      misses: 0,
+      // Clips: the base loop, the one-shot playing and at most one waiting.
+      base: 'Idle_Float' as Clip,
+      current: null as THREE.AnimationAction | null,
+      queued: null as Clip | null,
+      queuedRepeats: 1,
+      // Face.
+      expression: '' as Expression | '',
+      eventFace: 'happy' as Expression,
+      eventFor: 0,
+      typingFace: null as Expression | null,
+      talkClock: 0,
+      blinkIn: 3,
+      blinkFor: 0,
+      // Speech: the standing line (with its dots) and a passing one's timer.
+      line: '',
+      lineDots: null as number | null,
+      passingFor: 0,
+      // Growth.
+      growth: [1, 1, 1],
+      // Motion.
+      target: new THREE.Vector3(),
+      goal: new THREE.Vector3(),
+      velocity: new THREE.Vector3(),
+      eye: new THREE.Vector3(),
+      gaze: new THREE.Vector3(),
+      right: new THREE.Vector3(),
+      up: new THREE.Vector3(),
+      toEye: new THREE.Vector3(),
+      euler: new THREE.Euler(0, 0, 0, 'YXZ'),
+      turn: new THREE.Quaternion(),
+      headTurn: new THREE.Quaternion(),
+      bubbleSide: 1 as 1 | -1,
+      offset: new THREE.Vector2(),
+    }),
+    [],
+  );
+
+  // A one-shot finished: back to the base loop, then the queued one if any.
+  useEffect(() => {
+    if (!rig) return;
+    const onFinished = (event: { action: THREE.AnimationAction }) => {
+      if (event.action !== state.current) return;
+      state.current.fadeOut(FADE);
+      state.current = null;
+      fadeInBase(rig);
+      if (state.queued) {
+        const next = state.queued;
+        state.queued = null;
+        startClip(rig, next, state.queuedRepeats);
+      }
+    };
+    rig.mixer.addEventListener('finished', onFinished);
+    return () => rig.mixer.removeEventListener('finished', onFinished);
+  }, [rig, state]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) (window as unknown as { __buddy?: unknown }).__buddy = { rig, state, holder, bubble };
+  }, [rig, state, holder, bubble]);
+
+  function fadeInBase(r: BuddyRig) {
+    const base = r.actions.get(state.base);
+    if (!base) return;
+    base.reset();
+    base.weight = state.base === 'Idle_Float' ? IDLE_WEIGHT : 1;
+    base.fadeIn(FADE).play();
+  }
+
+  function startClip(r: BuddyRig, name: Clip, repeats: number) {
+    const action = r.actions.get(name);
+    if (!action) return;
+    action.reset();
+    action.setLoop(repeats > 1 ? THREE.LoopRepeat : THREE.LoopOnce, repeats);
+    action.clampWhenFinished = true;
+    action.weight = 1;
+    action.fadeIn(FADE).play();
+    r.actions.get(state.base)?.fadeOut(FADE);
+    state.current = action;
+  }
+
+  /** Plays a one-shot now, or after the one playing (only the newest waits). */
+  function play(r: BuddyRig, name: Clip, repeats = 1) {
+    if (state.current) {
+      state.queued = name;
+      state.queuedRepeats = repeats;
+      return;
+    }
+    startClip(r, name, repeats);
+  }
+
+  function setBase(r: BuddyRig, name: Clip) {
+    if (state.base === name) return;
+    const old = r.actions.get(state.base);
+    state.base = name;
+    if (state.current) return; // the one-shot hands over to the new base when it ends
+    old?.fadeOut(FADE);
+    fadeInBase(r);
+  }
+
+  function react(face: Expression, seconds: number) {
+    state.eventFace = face;
+    state.eventFor = seconds;
+  }
+
+  /** The standing line (typed out), shown until the next one. */
+  function say(line: string, dots: number | null, typingFace: Expression | null) {
+    state.line = line;
+    state.lineDots = dots;
+    state.passingFor = 0;
+    state.typingFace = typingFace;
+    bubble.say(line, dots);
+  }
+
+  /** A passing line: typed out, then the standing line returns. */
+  function sayPassing(line: string) {
+    state.passingFor = PASSING_SECONDS;
+    state.typingFace = null;
+    bubble.say(line, null);
+  }
+
+  useFrame((_, delta) => {
+    if (state.broken) return;
+    try {
+      frame(delta);
+    } catch (error) {
+      state.broken = true;
+      holder.visible = false;
+      bubble.group.visible = false;
+      console.error('Buddy stopped', error);
+    }
+  });
+
+  function frame(delta: number) {
+    const r = rig;
+    const presenting = gl.xr.isPresenting;
+    holder.visible = !!r && active && presenting;
+    if (!r || !holder.visible) {
+      bubble.setOpacity(0);
+      return;
+    }
+    const dt = Math.min(delta, 0.1);
+    const link = woundLink;
+    const flow = link.flow;
+
+    // The head.
+    const head = gl.xr.getCamera();
+    head.getWorldPosition(state.eye);
+    state.gaze.set(0, 0, -1).applyQuaternion(head.getWorldQuaternion(state.headTurn));
+    state.right.setFromMatrixColumn(head.matrixWorld, 0).normalize();
+    state.up.setFromMatrixColumn(head.matrixWorld, 1).normalize();
+
+    // The wound hand.
+    if (link.tracked) {
+      if (state.asleep) {
+        state.asleep = false;
+        setBase(r, 'Idle_Float');
+        react('surprised', 0.6);
+      }
+      state.lostFor = 0;
+      if (!state.greeted) {
+        state.greeted = true;
+        play(r, 'Wave');
+        react('happy', 2);
+        say(BUDDY_LINES.hello, null, null);
+      }
+    } else {
+      state.lostFor += dt;
+      if (state.greeted && !state.asleep && state.lostFor > SLEEP_AFTER) {
+        state.asleep = true;
+        setBase(r, 'Sleepy');
+      }
+    }
+
+    // The step flow's occasions.
+    if (flow && flow.steps !== state.steps) {
+      state.steps = flow.steps;
+      const stage = flow.stage;
+      if (stage === 0) {
+        play(r, 'Happy_Bounce', 2);
+        react('love', 2.5);
+        say(BUDDY_LINES.done, null, null);
+      } else {
+        if (!state.started) {
+          state.started = true;
+          play(r, 'Excited');
+          react('excited', 0.7);
+        }
+        play(r, 'Nod_Yes');
+        say(STAGE_LABELS[stage], stage, 'determined');
+      }
+    }
+    if (flow && flow.misses !== state.misses) {
+      state.misses = flow.misses;
+      play(r, 'Shake_No');
+      react('confused', 2);
+      sayPassing(BUDDY_LINES.closer);
+    }
+
+    // Where to be, gliding there.
+    const hand = link.tracked || (link.placed && state.lostFor < LOST_AFTER);
+    buddyTarget(state.goal, state.eye, state.gaze, hand ? link.point : null, link.thumbSide);
+    if (!state.placed) {
+      state.target.copy(state.goal);
+      holder.position.copy(state.goal);
+      state.velocity.set(0, 0, 0);
+      state.placed = true;
+    } else if (state.goal.distanceTo(state.target) > DEADBAND) {
+      state.target.copy(state.goal);
+    }
+    springStep(holder.position, state.velocity, state.target, dt);
+
+    // Facing the viewer: yaw, a little tilt (exactly at the viewer while speaking).
+    const speaking = bubble.hasMessage && !state.asleep;
+    state.toEye.subVectors(state.eye, holder.position);
+    const flat = Math.hypot(state.toEye.x, state.toEye.z);
+    if (flat > 1e-4) {
+      let pitch = -Math.atan2(state.toEye.y, flat);
+      if (!speaking) pitch = THREE.MathUtils.clamp(pitch, -THREE.MathUtils.degToRad(MAX_TILT_DEG), THREE.MathUtils.degToRad(MAX_TILT_DEG));
+      state.euler.set(pitch, Math.atan2(state.toEye.x, state.toEye.z), 0);
+      state.turn.setFromEuler(state.euler);
+      holder.quaternion.slerp(state.turn, 1 - Math.exp((-3 / TURN_SECONDS) * dt));
+    }
+
+    // The flower: the step flow's progress.
+    const goal = GROWTH[growthForStage(flow?.stage ?? 0, state.started)];
+    const k = dt / GROW_SECONDS;
+    for (let i = 0; i < 3; i++) state.growth[i] += THREE.MathUtils.clamp(goal[i] - state.growth[i], -k, k);
+    for (const mesh of r.sprouts) {
+      for (let i = 0; i < 3; i++) mesh.morphTargetInfluences![mesh.morphTargetDictionary![GROWTH_TARGETS[i]]] = state.growth[i];
+    }
+
+    // Speech: a passing line gives way to the standing one.
+    bubble.update(dt);
+    if (state.passingFor > 0 && !bubble.typing) {
+      state.passingFor -= dt;
+      if (state.passingFor <= 0) bubble.say(state.line, state.lineDots, true);
+    }
+    const talking = bubble.typing && bubble.hasMessage && !state.asleep;
+
+    // The face: a reaction, else the line's face while it types, else curious near a pinch, else happy (or asleep).
+    state.eventFor -= dt;
+    let face: Expression = state.asleep
+      ? 'sleepy'
+      : state.eventFor > 0
+        ? state.eventFace
+        : talking && state.typingFace
+          ? state.typingFace
+          : link.otherInRange
+            ? 'curious'
+            : 'happy';
+    state.talkClock = talking ? state.talkClock + dt : 0;
+    if (talking && Math.floor(state.talkClock / TALK_FLIP) % 2 === 1) face = 'talk';
+    state.blinkIn -= dt;
+    if (state.blinkIn <= 0) {
+      state.blinkIn = 2.2 + Math.random() * 3;
+      if (!NO_BLINK.has(face) && face !== 'talk') state.blinkFor = BLINK_SECONDS;
+    }
+    if (state.blinkFor > 0) {
+      state.blinkFor -= dt;
+      if (!NO_BLINK.has(face) && face !== 'talk') face = 'blink';
+    }
+    if (r.face?.map && face !== state.expression) {
+      state.expression = face;
+      r.face.map.offset.copy(expressionOffset(face, state.offset));
+    }
+
+    r.mixer.update(dt);
+
+    // The bubble: beside Buddy, on the side away from the wound as the viewer sees it, turned to the viewer.
+    bubble.setOpacity(speaking ? 1 : 0);
+    if (!speaking) return;
+    if (hand) {
+      const across = state.toEye.subVectors(holder.position, link.point).dot(state.right);
+      if (Math.abs(across) > SIDE_SWITCH) state.bubbleSide = across >= 0 ? 1 : -1;
+    }
+    const half = BUDDY_SIZE_CM / 200;
+    bubble.group.position
+      .copy(holder.position)
+      .addScaledVector(state.right, state.bubbleSide * (half + BUBBLE_GAP + bubble.width / 2))
+      .addScaledVector(state.up, 0.02);
+    bubble.group.quaternion.copy(state.headTurn);
+    bubble.setTailSide(state.bubbleSide === 1 ? -1 : 1);
+  }
+
+  return (
+    <>
+      <primitive object={holder} />
+      <primitive object={bubble.group} />
+    </>
+  );
+}
