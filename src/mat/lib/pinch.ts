@@ -12,6 +12,13 @@ export class PinchDetector {
   pinching = false;
   private lostFor = 0;
 
+  /** Thresholds (m) and the tracking-loss grace (s); the defaults are the mat's. */
+  constructor(
+    private readonly start = PINCH_START,
+    private readonly end = PINCH_END,
+    private readonly lostGrace = PINCH_LOST_GRACE,
+  ) {}
+
   /**
    * @param distance thumb-to-index tip distance in metres, or null when the hand isn't tracked.
    * @param dt seconds since the last update.
@@ -20,15 +27,15 @@ export class PinchDetector {
     if (distance === null) {
       if (!this.pinching) return null;
       this.lostFor += dt;
-      if (this.lostFor < PINCH_LOST_GRACE) return null;
+      if (this.lostFor < this.lostGrace) return null;
       return this.release();
     }
     this.lostFor = 0;
-    if (!this.pinching && distance < PINCH_START) {
+    if (!this.pinching && distance < this.start) {
       this.pinching = true;
       return 'start';
     }
-    if (this.pinching && distance > PINCH_END) return this.release();
+    if (this.pinching && distance > this.end) return this.release();
     return null;
   }
 

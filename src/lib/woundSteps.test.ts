@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CUT_OPEN_SECONDS, HOLD_BACK_SECONDS, STAGE_COUNT, STEP_COOLDOWN, StageFlow } from './woundSteps';
+import { CUT_OPEN_SECONDS, STAGE_COUNT, STEP_COOLDOWN, StageFlow } from './woundSteps';
 
 const OPEN = 0.05;
 const CLOSED = 0.005;
@@ -41,7 +41,7 @@ describe('StageFlow', () => {
     expect(flow.stage).toBe(0);
   });
 
-  it('ignores a second tap inside the cooldown', () => {
+  it('ignores a second release inside the cooldown (tracking jitter)', () => {
     const flow = new StageFlow();
     flow.update(0.016, CLOSED, true);
     flow.update(0.016, OPEN, true);
@@ -50,32 +50,50 @@ describe('StageFlow', () => {
     expect(flow.stage).toBe(1);
   });
 
-  it('pinch and hold goes back one stage, and the release does not advance', () => {
+  it('only ever goes forward, however long the pinch is held', () => {
     const flow = new StageFlow();
     tap(flow);
     tap(flow);
     expect(flow.stage).toBe(2);
     flow.update(0.016, CLOSED, true);
-    for (let t = 0; t < HOLD_BACK_SECONDS + 0.02; t += 0.016) flow.update(0.016, CLOSED, true);
-    expect(flow.stage).toBe(1);
+    for (let t = 0; t < 3; t += 0.016) flow.update(0.016, CLOSED, true);
+    expect(flow.stage).toBe(2);
+    flow.update(0.016, OPEN, true);
+    expect(flow.stage).toBe(3);
+  });
+
+  it('counts a real headset pinch (tips ~1.8 cm apart)', () => {
+    const flow = new StageFlow();
+    flow.update(0.016, 0.018, true);
     flow.update(0.016, OPEN, true);
     expect(flow.stage).toBe(1);
   });
 
-  it('a frame hitch mid-pinch is not a hold', () => {
+  it('counts a pinch that starts on the way to the wound', () => {
+    const flow = new StageFlow();
+    flow.update(0.016, CLOSED, false);
+    flow.update(0.016, CLOSED, true);
+    flow.update(0.016, CLOSED, false);
+    flow.update(0.016, OPEN, false);
+    expect(flow.stage).toBe(1);
+  });
+
+  it('a brief tracking loss mid-pinch is ignored, and the release still counts once', () => {
     const flow = new StageFlow();
     flow.update(0.016, CLOSED, true);
-    flow.update(1.5, CLOSED, true);
+    flow.update(0.5, null, false);
+    flow.update(0.016, CLOSED, true);
     flow.update(0.016, OPEN, true);
     expect(flow.stage).toBe(1);
   });
 
-  it('keeps the stage when the hand is lost mid-pinch', () => {
+  it('a hand lost mid-pinch still steps once, then keeps the stage', () => {
     const flow = new StageFlow();
     tap(flow);
     flow.update(0.016, CLOSED, true);
-    flow.update(1, null, false);
-    expect(flow.stage).toBe(1);
+    flow.update(2, null, false);
+    flow.update(2, null, false);
+    expect(flow.stage).toBe(2);
   });
 
   it('opens the cut more slowly', () => {
