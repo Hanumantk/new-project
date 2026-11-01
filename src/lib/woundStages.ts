@@ -33,6 +33,8 @@ export const woundTarget = {
   /** The hand the wound is on: only the other hand's pinches step through the stages. */
   hand: 'left' as 'left' | 'right',
   point: new THREE.Vector3(),
+  /** The step shown (0 = finished wound, 1…STAGE_COUNT = stages), for Buddy to react to. */
+  step: 0,
 };
 
 /** Whether a pinch at `pinch` (the thumb and index tips' midpoint) is at the wound. */

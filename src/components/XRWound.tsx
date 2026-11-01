@@ -590,6 +590,7 @@ export function XRWound({ strength }: XRWoundProps) {
     woundTarget.visible = opacity > 0;
     woundTarget.hand = xrPrefs.hand;
     woundTarget.point.copy(state.frame.point);
+    woundTarget.step = state.step;
 
     material.opacity = opacity;
     mesh.visible = opacity > 0 && (state.step === 0 || stageMeshes.length === 0);
