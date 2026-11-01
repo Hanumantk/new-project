@@ -10,6 +10,7 @@ import type { MatSystem } from '../mat/xr/MatSystem';
 import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
 import type { HandStatus } from './Hud';
 import { XRPoseSource } from './XRPoseSource';
+import { XRBuddy } from './XRBuddy';
 import { XRWound } from './XRWound';
 import { XRWoundPanel } from './XRWoundPanel';
 
@@ -65,6 +66,7 @@ export const XRScene = memo(function XRScene({
       <directionalLight position={[0.6, 2.2, 0.8]} intensity={1} />
       <XRPoseSource pose={pose} showHands={isVR} />
       <XRWound strength={woundOpacity} />
+      <XRBuddy active={mode !== null} />
       <XRWoundPanel active={mode !== null} />
       <HintPanel pose={pose} active={mode !== null} />
       <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} grab={grab} />

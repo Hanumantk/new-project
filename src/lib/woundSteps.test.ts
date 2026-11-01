@@ -96,6 +96,23 @@ describe('StageFlow', () => {
     expect(flow.stage).toBe(2);
   });
 
+  it('counts a quick pinch near (but not at) the wound as a near miss', () => {
+    const flow = new StageFlow();
+    flow.update(0.016, CLOSED, false, true);
+    flow.update(0.2, CLOSED, false, true);
+    flow.update(0.016, OPEN, false, true);
+    expect([flow.stage, flow.misses]).toEqual([0, 1]);
+  });
+
+  it('ignores far or long pinches (drawing the mat) as misses', () => {
+    const flow = new StageFlow();
+    tap(flow, false);
+    flow.update(0.016, CLOSED, false, true);
+    for (let t = 0; t < 2; t += 0.1) flow.update(0.1, CLOSED, false, true);
+    flow.update(0.016, OPEN, false, true);
+    expect(flow.misses).toBe(0);
+  });
+
   it('opens the cut more slowly', () => {
     const flow = new StageFlow();
     tap(flow);

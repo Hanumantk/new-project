@@ -27,6 +27,8 @@ declare module 'troika-three-text' {
       /** [minX, minY, maxX, maxY] of the laid-out block, in local units. */
       blockBounds: [number, number, number, number];
       visibleBounds: [number, number, number, number];
+      /** Per character: start x, end x, bottom y, top y. */
+      caretPositions?: Float32Array;
     } | null;
     sync(callback?: () => void): void;
     dispose(): void;
