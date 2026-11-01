@@ -10,10 +10,11 @@ import * as THREE from 'three';
  * edge 0..1, z = crease 0..1, w = nearness to the cut 0..1.
  *
  * The build stages (woundSteps.ts) are this same mesh and material: uStage
- * (0 = finished wound, 1…5) picks the shape (bare skin, wax mound or the
+ * (0 = finished wound, 1…6) picks the shape (bare skin, wax mound or the
  * sculpted wound, moved along `palmUp` before skinning) and the look;
  * uStageFrom and uStageBlend (0..1) blend from the previous stage. Stages 0
- * and 5 are the finished wound exactly.
+ * and 5 are the finished wound exactly; stage 6 is it aged (Stage_6.glb):
+ * the lips shaded dark brown, the cut a deeper red, the blood less glossy.
  */
 
 /** Look of the headset wound (sRGB hex where a colour). */
@@ -39,6 +40,10 @@ export const XR_WOUND_LOOK = {
   cutPowder: '#b9a2a0',
   bruise: '#6e4f6a',
   bruiseAmount: 0.3,
+  /** Stage 6, measured from Stage_6.glb against Stage_5.glb: the lips' and the cut's colour multipliers, and how much gloss the drying blood loses. */
+  agedLips: [0.68, 0.59, 0.59],
+  agedCut: [0.73, 0.64, 0.66],
+  agedDry: 0.3,
 } as const;
 
 const srgb = (hex: string) => new THREE.Color(hex);
@@ -168,6 +173,15 @@ export function createXRWoundMaterial(): XRWoundMaterial {
         }
         // A build stage's look; stages 0 and 5 are the finished wound, as given.
         XwLook xwStageLook(float s, XwLook done, float inward, float cut, float depth, float rise, float n1, float n2) {
+          if (s > 5.5) {
+            // Aged: a smudgy dark brown shadow on the lips, a deeper red in the cut, drier blood.
+            float lips = max(smoothstep(0.0, 0.35, cut), 0.9 * smoothstep(0.3, 0.9, rise)) * (1.0 - smoothstep(0.75, 1.0, cut)) * (0.75 + 0.5 * n1);
+            float inCut = smoothstep(0.7, 1.0, cut);
+            vec3 shade = mix(vec3(1.0), vec3(${L.agedLips.join(', ')}), clamp(lips, 0.0, 1.0));
+            shade *= mix(vec3(1.0), vec3(${L.agedCut.join(', ')}), inCut);
+            float wet = done.wet * (1.0 - ${L.agedDry.toFixed(2)});
+            return XwLook(done.col * shade, done.alpha, wet, wet, mix(0.6, 0.1, wet), done.ao, done.rim, done.raw);
+          }
           if (s < 0.5 || s > 4.5) return done;
           float edge = smoothstep(0.0, 1.0, inward);
           if (s < 1.5) {
