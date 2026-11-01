@@ -118,6 +118,8 @@ export interface MotionInput {
   watchWound: boolean;
   /** Face the viewer exactly (speaking). */
   facingViewer: boolean;
+  /** Buddy is making an expression (a reaction, talking, an occasion's clip): turn its face to the viewer, whatever else it's doing. */
+  expressive: boolean;
   /** Nothing else is going on: a flourish may play. */
   idle: boolean;
 }
@@ -519,10 +521,11 @@ export class BuddyMotion {
     }
     this.glanceFor -= dt;
     const remaining = this.body.distanceTo(this.goal);
-    const facingTravel = this.mode !== 'rest' && speed > 0.05 && (remaining > FACE_TRAVEL_UNTIL || this.mode === 'orbit');
+    // An expression is always shown to the viewer; otherwise face the flight, or glance at the wound.
+    const facingTravel = !input.expressive && this.mode !== 'rest' && speed > 0.05 && (remaining > FACE_TRAVEL_UNTIL || this.mode === 'orbit');
     let atViewer = false;
     if (facingTravel) this.look.copy(this.vel);
-    else if (input.wound && (input.watchWound || this.glanceFor > 0 || this.visit === 'holding')) this.look.subVectors(input.wound, pos);
+    else if (!input.expressive && input.wound && (input.watchWound || this.glanceFor > 0 || this.visit === 'holding')) this.look.subVectors(input.wound, pos);
     else {
       this.look.subVectors(input.eye, pos);
       atViewer = true;
@@ -531,9 +534,9 @@ export class BuddyMotion {
     let yaw = Math.atan2(this.look.x, this.look.z);
     let pitch = flat > 1e-5 ? -Math.atan2(this.look.y, flat) : 0;
     if (facingTravel) pitch = 0;
-    else if (!(atViewer && input.facingViewer)) pitch = THREE.MathUtils.clamp(pitch, -MAX_TILT_RAD, MAX_TILT_RAD);
+    else if (!(atViewer && (input.facingViewer || input.expressive))) pitch = THREE.MathUtils.clamp(pitch, -MAX_TILT_RAD, MAX_TILT_RAD);
     if (flat < 1e-5) yaw = this.euler.y;
-    const driftRot = THREE.MathUtils.degToRad(DRIFT_DEG) * calm * (input.facingViewer ? 0.4 : 1);
+    const driftRot = THREE.MathUtils.degToRad(DRIFT_DEG) * calm * (input.facingViewer || input.expressive ? 0.4 : 1);
     this.euler.set(pitch + driftRot * noise(t, 4), yaw + driftRot * noise(t, 5), driftRot * noise(t, 6), 'YXZ');
     this.qFace.setFromEuler(this.euler);
 

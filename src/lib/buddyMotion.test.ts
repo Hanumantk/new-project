@@ -14,6 +14,7 @@ function input(home: THREE.Vector3): MotionInput {
     wound: v(0, 1.3, -0.4),
     watchWound: false,
     facingViewer: false,
+    expressive: false,
     idle: false,
   };
 }
@@ -79,6 +80,28 @@ describe('BuddyMotion', () => {
     m.visitWound();
     const { events } = run(m, inp, 5);
     expect(events).toEqual(['visitArrived', 'visitLeft', 'arrived']);
+  });
+
+  it('faces the viewer while making an expression, even at the wound', () => {
+    const home = v(0.12, 1.34, -0.37);
+    const { m, inp } = settled(home);
+    m.visitWound();
+    inp.expressive = true;
+    let checked = 0;
+    for (let t = 0; t < 5; t += 1 / 72) {
+      const e = m.update(1 / 72, inp);
+      if (e === 'visitLeft') break;
+      if (m.mode === 'rest') {
+        // Its +Z (the face) points at the eyes, give or take the drift.
+        const face = v(0, 0, 1).applyQuaternion(m.quaternion);
+        const toEye = inp.eye.clone().sub(m.position).normalize();
+        if (t > 1.5) {
+          expect(face.angleTo(toEye)).toBeLessThan(THREE.MathUtils.degToRad(8));
+          checked++;
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 
   it('orbits the hand when the flow is done, then lands home', () => {
