@@ -253,9 +253,9 @@ export class MatSystem {
     this.hint.update(dt, this.head, this.headMatrix);
   }
 
-  /** A pinch by the hand without the wound, aimed at it, steps through the wound's stages: it doesn't draw. */
+  /** A pinch by the hand without the wound, at the wound, steps through the wound's stages: it doesn't draw. */
   private pinchAtWound(hand: HandState) {
-    return hand.handedness !== woundTarget.hand && isPinchAtWound(hand.pen, hand.joints[0]);
+    return hand.handedness !== woundTarget.hand && isPinchAtWound(hand.pen);
   }
 
   private beginStroke(hand: HandState) {
