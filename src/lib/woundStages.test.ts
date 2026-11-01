@@ -15,20 +15,14 @@ describe('nextStep', () => {
 
 describe('isPinchAtWound', () => {
   it('accepts a pinch close to the wound', () => {
-    expect(isPinchAtWound(v(0.08, 0, 0), v(0.2, 0, 0), target(0, 0, 0))).toBe(true);
+    expect(isPinchAtWound(v(0.06, 0.03, 0), target(0, 0, 0))).toBe(true);
   });
 
-  it('accepts a pinch aimed at the wound from further away', () => {
-    // Wrist → pinch points along −x, straight at the wound 30 cm on.
-    expect(isPinchAtWound(v(0.3, 0.01, 0), v(0.45, 0.01, 0), target(0, 0, 0))).toBe(true);
-  });
-
-  it('ignores a far pinch aimed elsewhere, or pointing away', () => {
-    expect(isPinchAtWound(v(0.3, 0, 0), v(0.3, -0.15, 0), target(0, 0, 0))).toBe(false);
-    expect(isPinchAtWound(v(0.3, 0, 0), v(0.15, 0, 0), target(0, 0, 0))).toBe(false);
+  it('ignores a pinch further away, wherever it points', () => {
+    expect(isPinchAtWound(v(0.2, 0, 0), target(0, 0, 0))).toBe(false);
   });
 
   it('ignores every pinch while the wound is hidden', () => {
-    expect(isPinchAtWound(v(0.01, 0, 0), v(0.1, 0, 0), target(0, 0, 0, false))).toBe(false);
+    expect(isPinchAtWound(v(0.01, 0, 0), target(0, 0, 0, false))).toBe(false);
   });
 });

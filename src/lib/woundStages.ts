@@ -3,7 +3,7 @@ import * as THREE from 'three';
 /**
  * The steps that build the headset wound (public/models/stages/Stage_1…5.glb,
  * in Wound.glb's own frame). Step 0 is the finished wound as usual; a pinch
- * by the other hand aimed at the wound shows stage 1, the next pinch stage 2,
+ * by the other hand at the wound shows stage 1, the next pinch stage 2,
  * and so on to stage 5; one more goes back to the finished wound.
  */
 export const STAGE_COUNT = 5;
@@ -24,12 +24,8 @@ export function stepLabel(step: number): { title: string; detail: string } {
   return { title: `Stage ${step} of ${STAGE_COUNT}`, detail: step < STAGE_COUNT ? 'Pinch for the next stage' : 'Pinch to see the finished wound' };
 }
 
-/** A pinch counts as at the wound within this distance of its centre (m)… */
-export const PINCH_NEAR = 0.12;
-/** …or when the line from the wrist through the pinch passes this close to it (m)… */
-export const PINCH_AIM = 0.04;
-/** …with the wound ahead of the pinch, no further than this (m). */
-export const PINCH_AIM_RANGE = 0.6;
+/** A pinch counts as at the wound within this distance of its centre (m): close, so a pinch elsewhere (drawing the mat) never changes the step. */
+export const PINCH_NEAR = 0.1;
 
 /** Where the wound is now (world), shared with the mat so a pinch at the wound doesn't start a drawing. */
 export const woundTarget = {
@@ -39,24 +35,10 @@ export const woundTarget = {
   point: new THREE.Vector3(),
 };
 
-const dir = new THREE.Vector3();
-const toWound = new THREE.Vector3();
-
-/** Whether a pinch at `pinch` (the thumb and index tips' midpoint), on a hand whose wrist is at `wrist`, is aimed at the wound. */
+/** Whether a pinch at `pinch` (the thumb and index tips' midpoint) is at the wound. */
 export function isPinchAtWound(
   pinch: THREE.Vector3,
-  wrist: THREE.Vector3,
   target: { visible: boolean; point: THREE.Vector3 } = woundTarget,
 ): boolean {
-  if (!target.visible) return false;
-  toWound.subVectors(target.point, pinch);
-  const distance = toWound.length();
-  if (distance < PINCH_NEAR) return true;
-  if (distance > PINCH_AIM_RANGE) return false;
-  dir.subVectors(pinch, wrist);
-  if (dir.lengthSq() < 1e-8) return false;
-  dir.normalize();
-  const ahead = toWound.dot(dir);
-  if (ahead <= 0) return false;
-  return Math.sqrt(Math.max(distance * distance - ahead * ahead, 0)) < PINCH_AIM;
+  return target.visible && pinch.distanceTo(target.point) < PINCH_NEAR;
 }
