@@ -26,12 +26,8 @@ export const VIEW_CONE_DEG = 25;
 /** Without the hand: this far ahead of the eyes and this far below them (m). */
 export const WAIT_AHEAD = 0.45;
 export const WAIT_BELOW = 0.1;
-/** Gliding: a critically damped spring that settles in about this long (s); target moves under this (m) are ignored. */
+/** The speech bubble follows Buddy on a critically damped spring that settles in about this long (s). */
 export const SPRING_SETTLE_SECONDS = 0.35;
-export const DEADBAND = 0.005;
-/** Turning to face the viewer: about this long (s), tilting at most this much (degrees). */
-export const TURN_SECONDS = 0.25;
-export const MAX_TILT_DEG = 15;
 
 /** Face atlas cells (4 × 4), left to right, top to bottom. */
 export const EXPRESSIONS = [
