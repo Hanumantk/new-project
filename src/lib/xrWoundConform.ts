@@ -44,19 +44,6 @@ const n = new THREE.Vector3();
 const k = new THREE.Vector3();
 const v = new THREE.Vector3();
 
-/** The palm's surface under the wound's footprint, in the wound's frame (see buildPalmSurface). */
-export interface PalmSurface {
-  hand: HandSurface;
-  x0: number;
-  z0: number;
-  nx: number;
-  nz: number;
-  height: Float32Array;
-  /** Per cell: the hand triangle under it (index into hand.index) and its barycentric weights. */
-  tri: Int32Array;
-  bary: Float32Array;
-}
-
 /**
  * @param toWound  World → wound frame.
  * @param lift     Extra height above the surface (m).
@@ -69,26 +56,8 @@ export function conformWound(
   lift: number,
   geometry: THREE.BufferGeometry,
 ): boolean {
-  const surface = buildPalmSurface(wound.halfWidth, wound.halfLength, hand, toWound);
-  if (!surface) return false;
-  applyPalmSurface(surface, wound, lift, geometry);
-  return true;
-}
-
-/**
- * The palm's smoothed surface over a footprint of the given half-size, as a
- * height map in the wound's frame; several meshes in that frame (the wound
- * and its stages) can then be laid onto it with applyPalmSurface.
- * @returns null if the hand's palm isn't under the footprint at all.
- */
-export function buildPalmSurface(
-  halfWidth: number,
-  halfLength: number,
-  hand: HandSurface,
-  toWound: THREE.Matrix4,
-): PalmSurface | null {
-  const x0 = -halfWidth * 1.8 - 0.004;
-  const z0 = -halfLength - 0.006;
+  const x0 = -wound.halfWidth * 1.8 - 0.004;
+  const z0 = -wound.halfLength - 0.006;
   const nx = Math.ceil((-2 * x0) / CELL) + 1;
   const nz = Math.ceil((-2 * z0) / CELL) + 1;
   const height = new Float32Array(nx * nz).fill(-Infinity);
@@ -137,7 +106,7 @@ export function buildPalmSurface(
   // Fill gaps (past the palm's edge) from the nearest filled cells.
   let filled = 0;
   for (let i = 0; i < tri.length; i++) if (tri[i] >= 0) filled++;
-  if (filled === 0) return null;
+  if (filled === 0) return false;
   for (let pass = 0; pass < nx + nz && filled < tri.length; pass++) {
     const prev = tri.slice();
     const prevH = height.slice();
@@ -181,18 +150,6 @@ export function buildPalmSurface(
     }
   }
 
-  return { hand, x0, z0, nx, nz, height, tri, bary };
-}
-
-/** Lays a mesh in the wound's frame onto the palm surface and gives it the hand's skin weights. */
-export function applyPalmSurface(
-  surface: PalmSurface,
-  wound: Pick<ConformSource, 'restPositions' | 'restNormals'>,
-  lift: number,
-  geometry: THREE.BufferGeometry,
-) {
-  const { hand, x0, z0, nx, nz, height, tri, bary } = surface;
-  const idx = hand.index;
   const sample = (x: number, z: number) => {
     const fx = THREE.MathUtils.clamp((x - x0) / CELL, 0, nx - 1.001);
     const fz = THREE.MathUtils.clamp((z - z0) / CELL, 0, nz - 1.001);
@@ -248,4 +205,5 @@ export function applyPalmSurface(
   }
   pos.needsUpdate = nor.needsUpdate = skinIndex.needsUpdate = skinWeight.needsUpdate = true;
   geometry.computeBoundingSphere();
+  return true;
 }

@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useState, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { XREstimatedLight } from 'three/examples/jsm/webxr/XREstimatedLight.js';
-import { PinchDetector } from '../mat/lib/pinch';
 import { normaliseWound, type WoundGeometryInfo } from '../lib/woundGeometry';
-import { studioEnvironment } from '../lib/studioEnvironment';
-import { STAGE_COUNT, STAGE_URLS, isPinchAtWound, nextStep, stepLabel, woundTarget } from '../lib/woundStages';
 import { XRHandModel, prepareHandModel } from '../lib/xrHandModel';
-import { applyPalmSurface, buildPalmSurface } from '../lib/xrWoundConform';
+import { conformWound } from '../lib/xrWoundConform';
 import { SKIN_PRESETS, setAutoWorking, xrPrefs, type HandSide } from '../lib/xrPrefs';
 import { XRSkinSampler } from '../lib/xrSkinSampler';
 import { createXRWoundMaterial, skinToneColor } from '../lib/xrWoundMaterial';
@@ -171,130 +169,11 @@ function isHandOpen(hand: THREE.XRHandSpace): boolean {
   return sum / FINGERTIPS.length > OPEN_RATIO;
 }
 
-/** Adds (empty) skin index/weight attributes, filled at each bind, and keeps the shape as loaded to lay it onto the hand afresh at each bind. */
-function prepareForSkinning(geometry: THREE.BufferGeometry) {
+/** Adds (empty) skin index/weight attributes, filled at each bind. */
+function addSkinAttributes(geometry: THREE.BufferGeometry) {
   const n = geometry.getAttribute('position').count;
   geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(n * 4), 4));
   geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(new Float32Array(n * 4), 4));
-  geometry.userData.restPositions = (geometry.getAttribute('position').array as Float32Array).slice();
-  geometry.userData.restNormals = (geometry.getAttribute('normal').array as Float32Array).slice();
-}
-
-/** The skin colour baked into Stage_5's texture around the wound (sRGB), mapped to the user's skin tone. */
-const STAGE_BAKED_SKIN = new THREE.Color().setRGB(227 / 255, 175 / 255, 148 / 255, THREE.SRGBColorSpace);
-const STAGE_BAKED_SKIN_INVERSE = new THREE.Color(1 / STAGE_BAKED_SKIN.r, 1 / STAGE_BAKED_SKIN.g, 1 / STAGE_BAKED_SKIN.b);
-
-interface Stage {
-  geometry: THREE.BufferGeometry;
-  material: THREE.MeshStandardMaterial;
-  /** Painted (its baked skin is mapped to the skin tone) rather than plain clay. */
-  textured: boolean;
-}
-
-/**
- * A stage model, moved into the wound's frame the same way Wound.glb was
- * (they were modelled in the same place), so it sits exactly where the wound does.
- */
-function loadStage(gltf: { scene: THREE.Object3D }, wound: WoundGeometryInfo): Stage | null {
-  gltf.scene.updateMatrixWorld(true);
-  let source: THREE.Mesh | null = null;
-  gltf.scene.traverse((o) => {
-    if (!source && (o as THREE.Mesh).isMesh) source = o as THREE.Mesh;
-  });
-  if (!source) return null;
-  const mesh = source as THREE.Mesh;
-  const geometry = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
-  geometry.translate(-wound.origin.x, -wound.origin.y, -wound.origin.z);
-  geometry.scale(wound.scale, wound.scale, wound.scale);
-  // Its normals are bent onto the palm at each bind; the normal map then works from screen-space derivatives.
-  geometry.deleteAttribute('tangent');
-  if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
-  prepareForSkinning(geometry);
-  mesh.geometry.dispose();
-  const loaded = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
-  const textured = !!loaded.map;
-  const material = textured
-    ? loaded
-    : new THREE.MeshStandardMaterial({ color: loaded.color, roughness: loaded.roughness ?? 0.9, metalness: 0, side: THREE.DoubleSide });
-  if (!textured) loaded.dispose();
-  Object.assign(material, {
-    transparent: true,
-    toneMapped: false,
-    envMapIntensity: 0.4,
-    // Always wins over the palm slab just below it, as the wound does.
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -4,
-  });
-  return { geometry, material, textured };
-}
-
-/** Pinches are ignored this long after the wound appears (s), so one already under way doesn't skip the finished wound. */
-const PINCH_SETTLE_SECONDS = 2;
-
-/** How long a step's label stays up (s), and the first hint about the stages. */
-const LABEL_SECONDS = 3;
-const FIRST_HINT_SECONDS = 5;
-const LABEL_W = 0.12;
-const LABEL_H = 0.035;
-
-/** A small label above the wound naming the step shown (in the style of the headset's hint). */
-class StepLabel {
-  readonly mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
-  private readonly canvas = document.createElement('canvas');
-  private readonly texture: THREE.CanvasTexture;
-  private showFor = 0;
-
-  constructor() {
-    this.canvas.width = 960;
-    this.canvas.height = 280;
-    this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(LABEL_W, LABEL_H),
-      new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, depthTest: false, depthWrite: false, toneMapped: false }),
-    );
-    this.mesh.renderOrder = 10;
-    this.mesh.visible = false;
-  }
-
-  show(step: number, seconds = LABEL_SECONDS) {
-    const { title, detail } = stepLabel(step);
-    const ctx = this.canvas.getContext('2d')!;
-    const { width: w, height: h } = this.canvas;
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(251, 250, 247, 0.94)';
-    ctx.beginPath();
-    ctx.roundRect(4, 4, w - 8, h - 8, 70);
-    ctx.fill();
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#1f2a24';
-    ctx.font = '600 84px "DM Sans", system-ui, sans-serif';
-    ctx.fillText(title, w / 2, 128);
-    ctx.fillStyle = '#5d6762';
-    ctx.font = '500 50px "DM Sans", system-ui, sans-serif';
-    ctx.fillText(detail, w / 2, 210);
-    this.texture.needsUpdate = true;
-    this.showFor = seconds;
-  }
-
-  /** Above the wound as the viewer sees it (along the head's up, so it never covers it), turned to face them. */
-  update(delta: number, at: THREE.Vector3, eye: THREE.Vector3, up: THREE.Vector3, opacity: number) {
-    this.showFor -= delta;
-    const fade = THREE.MathUtils.clamp(this.showFor / 0.3, 0, 1) * opacity;
-    this.mesh.visible = fade > 0;
-    if (!this.mesh.visible) return;
-    this.mesh.material.opacity = fade;
-    this.mesh.position.copy(at).addScaledVector(up, 0.075);
-    this.mesh.up.copy(up);
-    this.mesh.lookAt(eye);
-  }
-
-  dispose() {
-    this.texture.dispose();
-    this.mesh.geometry.dispose();
-    this.mesh.material.dispose();
-  }
 }
 
 /**
@@ -309,9 +188,6 @@ class StepLabel {
 export function XRWound({ strength }: XRWoundProps) {
   const findHand = useHandSpaces();
   const [info, setInfo] = useState<WoundGeometryInfo | null>(null);
-  const [stages, setStages] = useState<Stage[]>([]);
-  const env = useRef<THREE.Texture | null>(null);
-  const stageMaterials = useRef<THREE.MeshStandardMaterial[]>([]);
   const [handSource, setHandSource] = useState<THREE.SkinnedMesh | null>(null);
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
@@ -320,11 +196,7 @@ export function XRWound({ strength }: XRWoundProps) {
   useEffect(() => {
     let cancelled = false;
     let loaded: WoundGeometryInfo | null = null;
-    let loadedStages: Stage[] = [];
-    const loader = new GLTFLoader();
-    // The wound never waits for the stages: they're added (and laid onto the hand) when they arrive.
-    const stagesLoading = Promise.all(STAGE_URLS.map((url) => loader.loadAsync(url)));
-    loader
+    new GLTFLoader()
       .loadAsync(WOUND_URL)
       .then((gltf) => {
         let geometry: THREE.BufferGeometry | null = null;
@@ -334,18 +206,11 @@ export function XRWound({ strength }: XRWoundProps) {
         if (!geometry || cancelled) return;
         loaded = normaliseWound(geometry, LENGTH_CM / 100);
         (geometry as THREE.BufferGeometry).dispose();
-        prepareForSkinning(loaded.geometry);
-        const info = loaded;
-        setInfo(info);
-        stagesLoading
-          .then((stageGltfs) => {
-            if (cancelled) return;
-            const made = stageGltfs.map((g) => loadStage(g, info)).filter((stage): stage is Stage => !!stage);
-            if (made.length !== STAGE_COUNT) return;
-            loadedStages = made;
-            setStages(made);
-          })
-          .catch((error) => console.error('Could not load the wound stages', error));
+        addSkinAttributes(loaded.geometry);
+        // The flat wound as loaded, kept to lay it onto the hand afresh at each bind.
+        loaded.geometry.userData.restPositions = (loaded.geometry.getAttribute('position').array as Float32Array).slice();
+        loaded.geometry.userData.restNormals = (loaded.geometry.getAttribute('normal').array as Float32Array).slice();
+        setInfo(loaded);
       })
       .catch((error) => console.error('Could not load the wound model', error));
     new GLTFLoader()
@@ -361,14 +226,6 @@ export function XRWound({ strength }: XRWoundProps) {
     return () => {
       cancelled = true;
       loaded?.geometry.dispose();
-      for (const stage of loadedStages) {
-        stage.geometry.dispose();
-        stage.material.map?.dispose();
-        stage.material.normalMap?.dispose();
-        stage.material.roughnessMap?.dispose();
-        stage.material.aoMap?.dispose();
-        stage.material.dispose();
-      }
     };
   }, []);
   useEffect(() => () => material.dispose(), [material]);
@@ -388,17 +245,14 @@ export function XRWound({ strength }: XRWoundProps) {
 
   // Soft studio reflections for the wet blood (or the room's own, if the
   // session estimates the real light).
-  // Runs once, when the scene mounts: never again mid-session (see studioEnvironment).
   useEffect(() => {
-    const envMap = studioEnvironment(gl);
-    const setEnv = (map: THREE.Texture | null) => {
-      env.current = map;
-      for (const m of [material, ...stageMaterials.current]) {
-        m.envMap = map;
-        m.needsUpdate = true;
-      }
-    };
-    setEnv(envMap);
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const room = new RoomEnvironment();
+    const envMap = pmrem.fromScene(room, 0.04).texture;
+    material.envMap = envMap;
+    material.needsUpdate = true;
+    room.dispose();
+    pmrem.dispose();
 
     const estimated = new XREstimatedLight(gl);
     const ownLights: THREE.Light[] = [];
@@ -409,13 +263,17 @@ export function XRWound({ strength }: XRWoundProps) {
       });
       ownLights.forEach((light) => (light.visible = false));
       scene.add(estimated);
-      if (estimated.environment) setEnv(estimated.environment);
+      if (estimated.environment) {
+        material.envMap = estimated.environment;
+        material.needsUpdate = true;
+      }
     };
     const onEnd = () => {
       scene.remove(estimated);
       ownLights.forEach((light) => (light.visible = true));
       ownLights.length = 0;
-      setEnv(envMap);
+      material.envMap = envMap;
+      material.needsUpdate = true;
     };
     estimated.addEventListener('estimationstart', onStart);
     estimated.addEventListener('estimationend', onEnd);
@@ -424,16 +282,9 @@ export function XRWound({ strength }: XRWoundProps) {
       estimated.removeEventListener('estimationend', onEnd);
       onEnd();
       estimated.dispose();
+      envMap.dispose();
     };
   }, [gl, scene, material]);
-  // The stages arrive later: they take whichever reflections are current.
-  useEffect(() => {
-    stageMaterials.current = stages.map((stage) => stage.material);
-    for (const m of stageMaterials.current) {
-      m.envMap = env.current;
-      m.needsUpdate = true;
-    }
-  }, [stages]);
 
   // The wound, parented to the scene (never to the hand).
   const mesh = useMemo(() => {
@@ -445,27 +296,6 @@ export function XRWound({ strength }: XRWoundProps) {
     return o;
   }, [info, material]);
 
-  // The stages, made the same way; only the current step's mesh is shown.
-  const stageMeshes = useMemo(
-    () =>
-      stages.map((stage) => {
-        const o = USE_SKINNING ? new THREE.SkinnedMesh(stage.geometry, stage.material) : new THREE.Mesh(stage.geometry, stage.material);
-        o.frustumCulled = false;
-        o.renderOrder = 3;
-        o.visible = false;
-        return o;
-      }),
-    [stages],
-  );
-  const label = useMemo(() => new StepLabel(), []);
-  useEffect(
-    () => () => {
-      label.dispose();
-      woundTarget.visible = false;
-    },
-    [label],
-  );
-
   const state = useMemo(
     () => ({
       reader: new PalmFrameReader(),
@@ -473,8 +303,6 @@ export function XRWound({ strength }: XRWoundProps) {
       placed: false,
       bound: false,
       pendingBind: false,
-      /** How many stage meshes the last bind laid onto the hand (they may arrive after the wound). */
-      boundStages: 0,
       boundHeight: 0,
       sinceBind: 0,
       lostFor: Infinity,
@@ -486,24 +314,13 @@ export function XRWound({ strength }: XRWoundProps) {
       sampler: new XRSkinSampler(),
       sampleIn: 0,
       samplePoints: [0, 1, 2, 3, 4].map(() => new THREE.Vector3()),
-      /** 0: the finished wound; 1…STAGE_COUNT: that stage. */
-      step: 0,
-      pinch: new PinchDetector(),
-      pinchPoint: new THREE.Vector3(),
-      hinted: false,
-      stagesBroken: false,
-      /** How long the wound has been on show (s). */
-      shownFor: 0,
-      eye: new THREE.Vector3(),
-      headUp: new THREE.Vector3(),
-      headQuaternion: new THREE.Quaternion(),
     }),
     [],
   );
 
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, stageMeshes, label, hands, findHand, prefs: xrPrefs, scene };
-  }, [state, mesh, stageMeshes, label, hands, findHand, scene]);
+    if (import.meta.env.DEV) (window as unknown as { __xrWound?: unknown }).__xrWound = { state, mesh, hands, findHand, prefs: xrPrefs, scene };
+  }, [state, mesh, hands, findHand, scene]);
 
   useFrame((_, delta) => {
     if (!mesh || !hands) return;
@@ -512,11 +329,6 @@ export function XRWound({ strength }: XRWoundProps) {
       if (!(xrPrefs.skinAuto && xrPrefs.autoWorking)) {
         skinToneColor(SKIN_PRESETS[xrPrefs.skinPreset], xrPrefs.skinFine, material.userData.uniforms.skinTone.value);
       }
-    }
-    // The painted stage's skin takes the same skin tone (the clay keeps its own colour, so it shows).
-    const skinTone = material.userData.uniforms.skinTone.value;
-    for (const stage of stages) {
-      if (stage.textured) stage.material.color.copy(skinTone).multiply(STAGE_BAKED_SKIN_INVERSE);
     }
     const model = xrPrefs.hand === 'left' ? hands.left : hands.right;
     const other = model === hands.left ? hands.right : hands.left;
@@ -532,10 +344,6 @@ export function XRWound({ strength }: XRWoundProps) {
           state.boundHand = xrPrefs.hand;
           state.boundReattach = xrPrefs.reattach;
           model.startCalibration();
-          state.pendingBind = true;
-        }
-        if (state.bound && state.boundStages !== stageMeshes.length) {
-          state.boundStages = stageMeshes.length;
           state.pendingBind = true;
         }
         state.sinceBind += delta;
@@ -580,65 +388,15 @@ export function XRWound({ strength }: XRWoundProps) {
     }
     const fade = state.lostFor <= HOLD_SECONDS ? 1 : 1 - (state.lostFor - HOLD_SECONDS) / FADE_SECONDS;
     const opacity = state.placed ? THREE.MathUtils.clamp(fade, 0, 1) * THREE.MathUtils.clamp(strength.current ?? 1, 0, 1) : 0;
-    // Step through the stages: a pinch by the other hand, at the wound. (Guarded: the stages
-    // and their label are extras, and must never stop the wound itself.)
-    if (!state.stagesBroken) {
-      try {
-        stepStages(delta, opacity);
-      } catch (error) {
-        state.stagesBroken = true;
-        state.step = 0;
-        label.mesh.visible = false;
-        console.error('Wound stages stopped', error);
-      }
-    }
-    woundTarget.visible = opacity > 0;
-    woundTarget.hand = xrPrefs.hand;
-    woundTarget.point.copy(state.frame.point);
-    woundTarget.step = state.step;
-
     material.opacity = opacity;
-    mesh.visible = opacity > 0 && (state.step === 0 || stageMeshes.length === 0);
-    stageMeshes.forEach((o, i) => {
-      o.visible = opacity > 0 && state.step === i + 1;
-      (o.material as THREE.MeshStandardMaterial).opacity = opacity;
-    });
-    const shown = opacity > 0;
+    mesh.visible = opacity > 0;
     // The hand model: hides the wound behind the real hand; its wireframe on request.
-    model.root.visible = shown || (xrPrefs.showHandMesh && tracked);
-    model.occluder.visible = shown;
+    model.root.visible = mesh.visible || (xrPrefs.showHandMesh && tracked);
+    model.occluder.visible = mesh.visible;
     model.wire.visible = xrPrefs.showHandMesh;
   });
 
-  /** The other hand's pinch at the wound, and the label naming the step. */
-  function stepStages(delta: number, opacity: number) {
-    const otherHand = findHand(xrPrefs.hand === 'left' ? 'right' : 'left');
-    const thumb = otherHand?.joints['thumb-tip'];
-    const index = otherHand?.joints['index-finger-tip'];
-    const wrist = otherHand?.joints.wrist;
-    const otherTracked = !!(wrist?.visible && thumb && index);
-    const pinchEvent = state.pinch.update(otherTracked ? thumb!.position.distanceTo(index!.position) : null, delta);
-    state.shownFor = opacity > 0 ? state.shownFor + delta : 0;
-    if (pinchEvent === 'start' && otherTracked && stageMeshes.length > 0 && state.shownFor > PINCH_SETTLE_SECONDS) {
-      state.pinchPoint.addVectors(thumb!.position, index!.position).multiplyScalar(0.5);
-      if (isPinchAtWound(state.pinchPoint)) {
-        state.step = nextStep(state.step);
-        label.show(state.step);
-      }
-    }
-    const shown = opacity > 0;
-    if (shown && !state.hinted && stageMeshes.length > 0) {
-      state.hinted = true;
-      label.show(state.step, FIRST_HINT_SECONDS);
-    }
-    const head = gl.xr.getCamera();
-    head.getWorldPosition(state.eye);
-    head.getWorldQuaternion(state.headQuaternion);
-    state.headUp.set(0, 1, 0).applyQuaternion(state.headQuaternion);
-    label.update(delta, state.frame.point, state.eye, state.headUp, shown ? 1 : 0);
-  }
-
-  /** Lays the wound and its stages onto the hand model's palm skin as it is this frame and binds them to the model's bones. */
+  /** Lays the wound onto the hand model's palm skin as it is this frame and binds it to the model's bones. */
   function bind(skinned: THREE.SkinnedMesh, model: XRHandModel): boolean {
     // In proportion to this hand: bigger on a bigger palm, smaller on a smaller one.
     const handScale = model.palmLength / (REFERENCE_PALM_CM / 100);
@@ -651,9 +409,14 @@ export function XRWound({ strength }: XRWoundProps) {
     if (!state.surface || state.surface.length !== count * 3) state.surface = new Float32Array(count * 3);
     model.skinnedPositions(state.surface);
     state.toWound.copy(skinned.matrixWorld).invert();
-    const surface = buildPalmSurface(
-      info!.halfWidth,
-      info!.halfLength,
+    const g = skinned.geometry;
+    const ok = conformWound(
+      {
+        restPositions: g.userData.restPositions as Float32Array,
+        restNormals: g.userData.restNormals as Float32Array,
+        halfWidth: info!.halfWidth,
+        halfLength: info!.halfLength,
+      },
       {
         positions: state.surface,
         index: handGeometry.getIndex()!.array as ArrayLike<number>,
@@ -661,35 +424,13 @@ export function XRWound({ strength }: XRWoundProps) {
         skinWeight: handGeometry.getAttribute('skinWeight') as THREE.BufferAttribute,
       },
       state.toWound,
+      (OFFSET_MM + xrPrefs.skinHeightMm) / 1000 / handScale,
+      g,
     );
-    if (!surface) return false;
-    const lift = (OFFSET_MM + xrPrefs.skinHeightMm) / 1000 / handScale;
+    if (!ok) return false;
     // A new skeleton on the model's bones, so its inverses capture this exact pose.
     const old = skinned.skeleton;
-    const skeleton = new THREE.Skeleton(model.bones);
-    const layOn = (o: THREE.SkinnedMesh) => {
-      const g = o.geometry;
-      applyPalmSurface(surface, { restPositions: g.userData.restPositions, restNormals: g.userData.restNormals }, lift, g);
-      o.bind(skeleton, o.matrixWorld);
-    };
-    layOn(skinned);
-    // The stages follow the wound; a failure with them must never cost the wound itself.
-    if (!state.stagesBroken) {
-      try {
-        for (const o of stageMeshes as unknown as THREE.SkinnedMesh[]) {
-          o.position.copy(skinned.position);
-          o.quaternion.copy(skinned.quaternion);
-          o.scale.copy(skinned.scale);
-          o.updateMatrixWorld(true);
-          layOn(o);
-        }
-      } catch (error) {
-        state.stagesBroken = true;
-        state.step = 0;
-        console.error('Wound stages stopped', error);
-      }
-    }
-    state.boundStages = stageMeshes.length;
+    skinned.bind(new THREE.Skeleton(model.bones), skinned.matrixWorld);
     old?.dispose();
     return true;
   }
@@ -699,10 +440,6 @@ export function XRWound({ strength }: XRWoundProps) {
       {hands && <primitive object={hands.left.root} />}
       {hands && <primitive object={hands.right.root} />}
       {mesh && <primitive object={mesh} />}
-      {stageMeshes.map((o, i) => (
-        <primitive key={i} object={o} />
-      ))}
-      <primitive object={label.mesh} />
     </>
   );
 }

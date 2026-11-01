@@ -4,7 +4,6 @@ import type { Kit } from '../lib/kit';
 import { clearSavedMat, loadOpacity, loadSavedMat, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
 import { PalmUpToggle } from '../lib/palmUp';
 import { PinchDetector } from '../lib/pinch';
-import { isPinchAtWound, woundTarget } from '../../lib/woundStages';
 import { fitRectangle, isBigEnough, orientToViewer, type MatPlacement } from '../lib/rectFit';
 import { StrokeBuffer } from '../lib/stroke';
 import { medianY, pointInPolygon, surfaceFromPen } from '../lib/surface';
@@ -214,8 +213,8 @@ export class MatSystem {
         if (this.testTraceRequested) {
           this.testTraceRequested = false;
           this.runTestTrace(frame, space);
-        } else if (rightEvent === 'start' && !this.pinchAtWound(this.hands.right)) this.beginStroke(this.hands.right);
-        else if (leftEvent === 'start' && !this.pinchAtWound(this.hands.left)) this.beginStroke(this.hands.left);
+        } else if (rightEvent === 'start') this.beginStroke(this.hands.right);
+        else if (leftEvent === 'start') this.beginStroke(this.hands.left);
         break;
       case 'drawing': {
         const hand = this.pen!;
@@ -251,11 +250,6 @@ export class MatSystem {
 
     this.strokeView.update(dt);
     this.hint.update(dt, this.head, this.headMatrix);
-  }
-
-  /** A pinch by the hand without the wound, at the wound, steps through the wound's stages: it doesn't draw. */
-  private pinchAtWound(hand: HandState) {
-    return hand.handedness !== woundTarget.hand && isPinchAtWound(hand.pen);
   }
 
   private beginStroke(hand: HandState) {
