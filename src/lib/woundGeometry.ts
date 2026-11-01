@@ -30,8 +30,10 @@ export interface WoundGeometryInfo {
   /** Half-extents in x and z (metres). */
   halfWidth: number;
   halfLength: number;
-  /** The scale applied to the model's units. */
+  /** The scale applied to the model's units… */
   scale: number;
+  /** …after moving this point (model units: centre in x/z, skin level in y) to the origin. */
+  origin: THREE.Vector3;
 }
 
 export function normaliseWound(source: THREE.BufferGeometry, length = WOUND_LENGTH): WoundGeometryInfo {
@@ -226,5 +228,6 @@ export function normaliseWound(source: THREE.BufferGeometry, length = WOUND_LENG
     halfWidth: ((maxX - minX) / 2) * scale,
     halfLength: length / 2,
     scale,
+    origin: new THREE.Vector3(cx, skin, cz),
   };
 }
