@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Grabbable, GrabState } from '../../lib/grab';
+import { xrPrefs } from '../../lib/xrPrefs';
 import type { Kit } from '../lib/kit';
 import { clearSavedMat, loadOpacity, loadSavedMat, saveMat, saveOpacity, type SavedMat } from '../lib/matStore';
 import { PalmUpToggle } from '../lib/palmUp';
@@ -392,13 +393,14 @@ export class MatSystem {
 
   /** Per frame while the mat is down: panel pokes, the palm-up toggle, the opacity fade. */
   private updateControls(dt: number) {
-    const left = this.hands.left;
-    // Only while the right hand is tracked: then the wound is on the right
-    // palm, and turning the left palm up isn't someone looking at the wound.
-    const busy = !left.tracked || left.pinchDistance < 0.03 || !this.hands.right.tracked;
-    if (this.palmUp.update(busy ? null : left.palmNormal.y, dt)) {
+    // The palm without the wound: turning the wound's palm up is someone
+    // looking at the wound, and must never hide the controls.
+    const freeSide = xrPrefs.hand === 'left' ? 'right' : 'left';
+    const free = this.hands[freeSide];
+    const busy = !free.tracked || free.pinchDistance < 0.03 || !this.hands[xrPrefs.hand].tracked;
+    if (this.palmUp.update(busy ? null : free.palmNormal.y, dt)) {
       this.panel.group.visible = !this.panel.group.visible;
-      if (!this.panel.group.visible) this.hint.show('Controls hidden', 'Turn your left palm up again to bring them back.', 3);
+      if (!this.panel.group.visible) this.hint.show('Controls hidden', `Turn your ${freeSide} palm up again to bring them back.`, 3);
       else this.hint.hide();
     }
     if (this.panel.group.visible && !this.panelHeld) this.panel.update(dt, this.handList);
