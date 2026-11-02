@@ -17,6 +17,16 @@ export const BUDDY_COLOR = '#EC6A67';
 export const BUDDY_SIDE = 0.12;
 export const BUDDY_UP = 0.04;
 export const BUDDY_TOWARD_EYE = 0.03;
+/**
+ * While you work (a step of the flow shown, the wound hand still for
+ * STILL_SECONDS, under STILL_SPEED), Buddy parks this far to the left of the
+ * hand as you see it (m) and stays there, until the hand moves UNLOCK_MOVE
+ * away or the flow ends.
+ */
+export const WORK_SIDE = 0.2;
+export const STILL_SPEED = 0.04;
+export const STILL_SECONDS = 0.6;
+export const UNLOCK_MOVE = 0.1;
 /** Never closer than this to the palm centre (m), so it never touches the hand. */
 export const BUDDY_MIN_PALM_DISTANCE = 0.08;
 /** Never within this angle of the wound as seen from the eyes (degrees), so it never hides it. */
@@ -100,6 +110,7 @@ export function buddyTarget(
   gaze: THREE.Vector3,
   palm: THREE.Vector3 | null,
   thumbSide: THREE.Vector3,
+  sideDistance = BUDDY_SIDE,
 ): THREE.Vector3 {
   if (!palm) {
     w.copy(gaze).setY(0);
@@ -107,7 +118,7 @@ export function buddyTarget(
     w.normalize();
     return out.copy(eye).addScaledVector(w, WAIT_AHEAD).setY(eye.y - WAIT_BELOW);
   }
-  out.copy(palm).addScaledVector(thumbSide, BUDDY_SIDE);
+  out.copy(palm).addScaledVector(thumbSide, sideDistance);
   out.y += BUDDY_UP;
   w.subVectors(eye, palm);
   if (w.lengthSq() > 1e-8) out.addScaledVector(w.normalize(), BUDDY_TOWARD_EYE);
