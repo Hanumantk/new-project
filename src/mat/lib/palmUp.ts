@@ -5,7 +5,7 @@ export const PALM_UP_HOLD = 0.5;
 /** It re-arms once the palm turns well away from up. */
 export const PALM_DOWN_Y = 0.4;
 
-/** Turning the left palm up (and holding it) toggles something once. */
+/** Turning a palm up (and holding it) toggles something once. */
 export class PalmUpToggle {
   /** Progress of the current hold, 0..1. */
   progress = 0;

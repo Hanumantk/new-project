@@ -154,9 +154,9 @@ fallback.
    - **Step mode** highlights one item at a time, shows its purpose large,
      and dims the rest to 20%.
    - **Redraw** removes the mat; tap twice to confirm.
-5. **Turn your left palm up** and hold it for half a second to hide or show
-   the controls. This works while your right hand is tracked; otherwise the
-   wound is on your left palm and turning it up just shows the wound.
+5. **Turn the palm without the wound up** (your right palm when the wound is
+   on your left) and hold it for half a second to hide or show the controls.
+   Turning the wound's palm up just shows the wound; it never hides them.
 6. Next time you enter mixed reality, the last mat is restored
    automatically (Quest's persistent anchors). It reappears where you left
    it once the headset recognises the room. Redraw replaces it.
