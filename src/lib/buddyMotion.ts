@@ -77,9 +77,10 @@ const HOP_SECONDS = 0.5;
 const WOBBLE = 0.012;
 const WOBBLE_HZ = 2.5;
 const WOBBLE_SECONDS = 1;
-/** Dozing: drift down and towards the viewer this far (m), slowly (m/s). */
+/** Dozing: sink this far below home (m), slowly (m/s); never closer to the viewer. Asleep, it still moves (at DOZE_SPEED) if home moves away. */
 const SLEEP_DROP = 0.05;
 const SLEEP_SPEED = 0.05;
+const DOZE_SPEED = 0.3;
 /** Greeting: enter from this far round from the gaze (degrees), this far away (m). */
 const ENTER_DEG = VIEW_CONE_DEG + 12;
 const ENTER_DISTANCE = 0.45;
@@ -155,7 +156,6 @@ export class BuddyMotion {
   // Overrides: visiting the wound, dozing.
   private visit: 'none' | 'going' | 'holding' | 'returning' = 'none';
   private visitFor = 0;
-  private readonly sleepPoint = new THREE.Vector3();
   // Landing.
   private readonly settle = new THREE.Vector3();
   private readonly settleVel = new THREE.Vector3();
@@ -235,14 +235,11 @@ export class BuddyMotion {
     this.bubbleOpacity = 0.4;
   }
 
-  /** Doze off: sink a little and drift closer to the viewer, slowly. */
-  sleep(eye: THREE.Vector3) {
+  /** Doze off: sink a little, slowly. */
+  sleep() {
     this.asleep = true;
     this.visit = 'none';
     this.endFlourish();
-    this.a.subVectors(eye, this.body).normalize();
-    this.sleepPoint.copy(this.body).addScaledVector(this.a, SLEEP_DROP);
-    this.sleepPoint.y -= SLEEP_DROP;
     this.startTrip(SLEEP_SPEED, true);
   }
 
@@ -269,7 +266,11 @@ export class BuddyMotion {
 
   /** The current destination. */
   private destination(input: MotionInput, out: THREE.Vector3) {
-    if (this.asleep) return out.copy(this.sleepPoint);
+    if (this.asleep) {
+      out.copy(input.home);
+      out.y -= SLEEP_DROP;
+      return out;
+    }
     if ((this.visit === 'going' || this.visit === 'holding') && input.wound) {
       return out.copy(input.wound).addScaledVector(THREE.Object3D.DEFAULT_UP, 0.06);
     }
@@ -339,12 +340,12 @@ export class BuddyMotion {
           this.startTrip(MAX_SPEED, true);
           event = 'visitLeft';
         }
-      } else if (!this.asleep && this.wobbleT === Infinity) {
+      } else if (this.wobbleT === Infinity) {
         // Decide: stay while home is close and Buddy's in view; else react, then go.
         const away = this.goal.distanceTo(this.anchor) > COMFORT || !this.inView(input, this.anchor, 2);
         if (!away) this.reactIn = -1;
         else if (this.reactIn < 0) this.reactIn = rand(REACTION_DELAY_S);
-        else if ((this.reactIn -= dt) <= 0) this.startTrip(MAX_SPEED, false);
+        else if ((this.reactIn -= dt) <= 0) this.startTrip(this.asleep ? DOZE_SPEED : MAX_SPEED, this.asleep);
       }
     }
 

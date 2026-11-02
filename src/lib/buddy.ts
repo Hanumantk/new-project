@@ -33,9 +33,15 @@ export const BUDDY_MIN_PALM_DISTANCE = 0.08;
 export const NO_BLOCK_DEG = 12;
 /** Kept within this cone around the gaze (degrees), so it stays in view. */
 export const VIEW_CONE_DEG = 25;
-/** Without the hand: this far ahead of the eyes and this far below them (m). */
-export const WAIT_AHEAD = 0.45;
-export const WAIT_BELOW = 0.1;
+/**
+ * Without the hand: off to your side, out of your face. This far away (m),
+ * this far round from where you look (degrees) towards the given side and a
+ * little below it; locked there until it would leave your view (AWAY_RELOCK_DEG).
+ */
+export const AWAY_DISTANCE = 0.6;
+export const AWAY_SIDE_DEG = 18;
+export const AWAY_BELOW = 0.04;
+export const AWAY_RELOCK_DEG = 24;
 /** The speech bubble follows Buddy on a critically damped spring that settles in about this long (s). */
 export const SPRING_SETTLE_SECONDS = 0.35;
 
@@ -113,10 +119,15 @@ export function buddyTarget(
   sideDistance = BUDDY_SIDE,
 ): THREE.Vector3 {
   if (!palm) {
-    w.copy(gaze).setY(0);
-    if (w.lengthSq() < 1e-8) w.set(0, 0, -1);
-    w.normalize();
-    return out.copy(eye).addScaledVector(w, WAIT_AHEAD).setY(eye.y - WAIT_BELOW);
+    // Off to the side (`thumbSide` is the side to wait on): the gaze swung that way, far enough to stay out of your face.
+    perp.copy(thumbSide).addScaledVector(gaze, -thumbSide.dot(gaze));
+    if (perp.lengthSq() < 1e-8) perp.set(gaze.z, 0, -gaze.x);
+    perp.normalize();
+    const a = THREE.MathUtils.degToRad(AWAY_SIDE_DEG);
+    w.copy(gaze).multiplyScalar(Math.cos(a)).addScaledVector(perp, Math.sin(a));
+    out.copy(eye).addScaledVector(w, AWAY_DISTANCE);
+    out.y -= AWAY_BELOW;
+    return out;
   }
   out.copy(palm).addScaledVector(thumbSide, sideDistance);
   out.y += BUDDY_UP;
