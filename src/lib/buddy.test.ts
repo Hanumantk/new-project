@@ -4,6 +4,7 @@ import {
   BUDDY_MIN_PALM_DISTANCE,
   BUDDY_SCALE,
   NO_BLOCK_DEG,
+  WORK_SIDE,
   VIEW_CONE_DEG,
   WAIT_AHEAD,
   buddyTarget,
@@ -43,6 +44,14 @@ describe('buddyTarget', () => {
     const p = buddyTarget(new THREE.Vector3(), eye, gazeAway, farPalm, thumb);
     expect(THREE.MathUtils.radToDeg(p.clone().sub(eye).angleTo(gazeAway))).toBeCloseTo(VIEW_CONE_DEG, 1);
     expect(p.x).toBeGreaterThan(0); // on the hand's side
+  });
+
+  it('parks well to the left of the hand while you work, clear of the wound and in view', () => {
+    const left = v(-1, 0, 0);
+    const p = buddyTarget(new THREE.Vector3(), eye, gazeAtPalm, palm, left, WORK_SIDE);
+    expect(p.x - palm.x).toBeLessThan(-0.12);
+    expect(angleDeg(eye, p, palm)).toBeGreaterThanOrEqual(NO_BLOCK_DEG - 0.01);
+    expect(THREE.MathUtils.radToDeg(p.clone().sub(eye).angleTo(gazeAtPalm))).toBeLessThanOrEqual(VIEW_CONE_DEG + 0.01);
   });
 
   it('floats ahead of the eyes, a little low, without the hand', () => {

@@ -10,6 +10,10 @@ import {
   GROWTH,
   GROWTH_TARGETS,
   NO_BLINK,
+  STILL_SECONDS,
+  STILL_SPEED,
+  UNLOCK_MOVE,
+  WORK_SIDE,
   buddyTarget,
   expressionOffset,
   growthForStage,
@@ -214,6 +218,15 @@ export function XRBuddy({ active }: { active: boolean }) {
       bounceOnLanding: false,
       // Growth.
       growth: [1, 1, 1],
+      // Working: the hand still during a step, Buddy parked to its left.
+      handPrev: new THREE.Vector3(),
+      handSeen: false,
+      handSpeed: 0,
+      stillFor: 0,
+      locked: false,
+      lockHand: new THREE.Vector3(),
+      lockPoint: new THREE.Vector3(),
+      left: new THREE.Vector3(),
       // Motion.
       motion: new BuddyMotion(),
       entered: false,
@@ -349,6 +362,38 @@ export function XRBuddy({ active }: { active: boolean }) {
     }
   });
 
+  /** Locks Buddy to the hand's left once the hand is still during a step; lets go when the hand moves on or the flow ends. */
+  function updateWorkLock(dt: number, tracked: boolean, working: boolean) {
+    const link = woundLink;
+    if (tracked) {
+      if (state.handSeen) {
+        const speed = link.point.distanceTo(state.handPrev) / Math.max(dt, 1e-4);
+        state.handSpeed += (speed - state.handSpeed) * (1 - Math.exp(-8 * dt));
+      }
+      state.handPrev.copy(link.point);
+      state.handSeen = true;
+      state.stillFor = state.handSpeed < STILL_SPEED ? state.stillFor + dt : 0;
+    }
+    if (!working) {
+      state.locked = false;
+      return;
+    }
+    if (state.locked) {
+      if (tracked && link.point.distanceTo(state.lockHand) > UNLOCK_MOVE) {
+        state.locked = false;
+        state.stillFor = 0;
+      }
+      return;
+    }
+    if (tracked && state.stillFor > STILL_SECONDS) {
+      const input = state.input;
+      state.locked = true;
+      state.lockHand.copy(link.point);
+      state.left.copy(input.right).negate();
+      buddyTarget(state.lockPoint, input.eye, input.gaze, link.point, state.left, WORK_SIDE);
+    }
+  }
+
   function frame(delta: number) {
     const r = rig;
     const presenting = gl.xr.isPresenting;
@@ -372,14 +417,18 @@ export function XRBuddy({ active }: { active: boolean }) {
 
     // Home: the placement rules (beside the hand, clear of the wound, in view; ahead of the eyes without the hand).
     const hand = link.tracked || (link.placed && state.lostFor < LOST_AFTER);
-    buddyTarget(input.home, input.eye, input.gaze, hand ? link.point : null, link.thumbSide);
+    // Working (a step shown, the hand still): park to the hand's left, out of the way, and stay.
+    const wasLocked = state.locked;
+    updateWorkLock(dt, link.tracked, (flow?.stage ?? 0) > 0);
+    if (state.locked) input.home.copy(state.lockPoint);
+    else buddyTarget(input.home, input.eye, input.gaze, hand ? link.point : null, link.thumbSide);
     input.wound = link.placed ? link.point : null;
     input.watchWound = link.otherInRange;
     input.facingViewer = bubble.hasMessage && !motion.asleep;
     // Any expression faces the viewer: a reaction, talking, an occasion's clip, or curiosity at a coming pinch.
     input.expressive =
       !motion.asleep && (state.eventFor > 0 || (bubble.typing && bubble.hasMessage) || !!state.current || link.otherInRange);
-    input.idle = !state.current && !bubble.typing && !state.pending && link.tracked;
+    input.idle = !state.current && !bubble.typing && !state.pending && link.tracked && !state.locked;
     if (!state.entered) {
       // Session start: fly in from the side of the view (the hand's side, if known).
       state.entered = true;
@@ -416,9 +465,9 @@ export function XRBuddy({ active }: { active: boolean }) {
       state.steps = flow.steps;
       const stage = flow.stage;
       if (stage === 0) {
-        // Done: a lap of honour round the hand, then bounce at home.
+        // Done: a lap of honour round the hand, then bounce at home (just a bounce where it is if you were working).
         react('love', 2.5);
-        if (link.placed) {
+        if (link.placed && !wasLocked) {
           motion.orbitHand(link.point, input.right, input.up);
           state.bounceOnLanding = true;
         } else play(r, 'Happy_Bounce', 2);
@@ -429,8 +478,8 @@ export function XRBuddy({ active }: { active: boolean }) {
           play(r, 'Excited');
           react('excited', 0.7);
         }
-        // Over to the wound to point at it (a nod there), then home while the instruction types.
-        motion.visitWound();
+        // A nod where it is: it never comes over to the hand while you work.
+        play(r, 'Nod_Yes');
         say(STAGE_LABELS[stage], stage, 'determined');
       }
     }
