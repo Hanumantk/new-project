@@ -170,8 +170,9 @@ edge facing you. Points from your hand arriving or lifting off are ignored.
 
 ### Moving things with a fist
 
-Anything in the headset can be moved: the material mat, its control panel
-and the wound-opacity panel.
+Anything in the headset can be moved: the material mat, its control panel,
+the wound-opacity panel and the wound controls panel (hand, skin tone,
+Calibrate, Mesh, height).
 
 1. Put your hand **on** it, or **point your hand at it** from up to 2.5 m
    away. It lights up: the mat's edge brightens, a panel turns mint.
