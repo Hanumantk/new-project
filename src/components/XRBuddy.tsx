@@ -9,6 +9,7 @@ import {
   BUDDY_SIZE_CM,
   GROWTH,
   GROWTH_TARGETS,
+  AWAY_RELOCK_DEG,
   NO_BLINK,
   STILL_SECONDS,
   STILL_SPEED,
@@ -22,6 +23,7 @@ import {
 } from '../lib/buddy';
 import { BuddyMotion, type MotionInput } from '../lib/buddyMotion';
 import { STAGE_COUNT, STAGE_LABELS, woundLink } from '../lib/woundSteps';
+import { xrPrefs } from '../lib/xrPrefs';
 import { SpeechBubble } from '../lib/xrSpeechBubble';
 
 const BUDDY_URL = `${import.meta.env.BASE_URL}models/buddy_character.glb`;
@@ -227,6 +229,10 @@ export function XRBuddy({ active }: { active: boolean }) {
       lockHand: new THREE.Vector3(),
       lockPoint: new THREE.Vector3(),
       left: new THREE.Vector3(),
+      // Without the hand: a spot off to the side, locked until it would leave the view.
+      awayLocked: false,
+      awayPoint: new THREE.Vector3(),
+      awaySide: new THREE.Vector3(),
       // Motion.
       motion: new BuddyMotion(),
       entered: false,
@@ -394,6 +400,20 @@ export function XRBuddy({ active }: { active: boolean }) {
     }
   }
 
+  /** Without the hand: off to the wound hand's side, at a distance, staying put until it would leave the view. */
+  function awaySpot() {
+    const input = state.input;
+    if (state.awayLocked) {
+      state.scratch.subVectors(state.awayPoint, input.eye);
+      const off = THREE.MathUtils.radToDeg(state.scratch.angleTo(input.gaze));
+      if (off <= AWAY_RELOCK_DEG) return state.awayPoint;
+    }
+    state.awaySide.copy(input.right).multiplyScalar(xrPrefs.hand === 'left' ? -1 : 1);
+    buddyTarget(state.awayPoint, input.eye, input.gaze, null, state.awaySide);
+    state.awayLocked = true;
+    return state.awayPoint;
+  }
+
   function frame(delta: number) {
     const r = rig;
     const presenting = gl.xr.isPresenting;
@@ -421,7 +441,10 @@ export function XRBuddy({ active }: { active: boolean }) {
     const wasLocked = state.locked;
     updateWorkLock(dt, link.tracked, (flow?.stage ?? 0) > 0);
     if (state.locked) input.home.copy(state.lockPoint);
-    else buddyTarget(input.home, input.eye, input.gaze, hand ? link.point : null, link.thumbSide);
+    else if (hand) {
+      buddyTarget(input.home, input.eye, input.gaze, link.point, link.thumbSide);
+      state.awayLocked = false; // a fresh side spot next time the hand goes
+    } else input.home.copy(awaySpot());
     input.wound = link.placed ? link.point : null;
     input.watchWound = link.otherInRange;
     input.facingViewer = bubble.hasMessage && !motion.asleep;
@@ -456,7 +479,7 @@ export function XRBuddy({ active }: { active: boolean }) {
       if (state.greeted && !state.asleep && state.lostFor > SLEEP_AFTER) {
         state.asleep = true;
         setBase(r, 'Sleepy');
-        motion.sleep(input.eye);
+        motion.sleep();
       }
     }
 

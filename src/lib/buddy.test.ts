@@ -6,7 +6,7 @@ import {
   NO_BLOCK_DEG,
   WORK_SIDE,
   VIEW_CONE_DEG,
-  WAIT_AHEAD,
+  AWAY_DISTANCE,
   buddyTarget,
   expressionOffset,
   growthForStage,
@@ -54,10 +54,15 @@ describe('buddyTarget', () => {
     expect(THREE.MathUtils.radToDeg(p.clone().sub(eye).angleTo(gazeAtPalm))).toBeLessThanOrEqual(VIEW_CONE_DEG + 0.01);
   });
 
-  it('floats ahead of the eyes, a little low, without the hand', () => {
-    const p = buddyTarget(new THREE.Vector3(), eye, v(0, 0, -1), null, thumb);
-    expect(p.z).toBeCloseTo(-WAIT_AHEAD);
-    expect(p.y).toBeCloseTo(1.5);
+  it('waits off to the given side without the hand, well away from the eyes and in view', () => {
+    const gaze = v(0, 0, -1);
+    const p = buddyTarget(new THREE.Vector3(), eye, gaze, null, v(-1, 0, 0));
+    expect(p.distanceTo(eye)).toBeGreaterThan(AWAY_DISTANCE - 0.01);
+    expect(p.x).toBeLessThan(-0.15); // to the left
+    expect(p.y).toBeLessThan(eye.y);
+    const off = THREE.MathUtils.radToDeg(p.clone().sub(eye).angleTo(gaze));
+    expect(off).toBeGreaterThan(15);
+    expect(off).toBeLessThanOrEqual(VIEW_CONE_DEG);
   });
 });
 
