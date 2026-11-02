@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { PANEL_GRAB_TINT, type GrabState, type GrabSystem } from '../lib/grab';
 import { SKIN_PRESETS, requestReattach, setXRPrefs, xrPrefs, type HandSide } from '../lib/xrPrefs';
 
 /** Panel size (metres) and canvas resolution. */
@@ -58,7 +59,7 @@ const REGIONS: Region[] = [
  * presets, a fine adjustment) and the wound's height on the skin. Press with
  * an index fingertip.
  */
-export function XRWoundPanel({ active }: { active: boolean }) {
+export function XRWoundPanel({ active, grab }: { active: boolean; grab: GrabSystem }) {
   const gl = useThree((s) => s.gl);
   const meshRef = useRef<THREE.Mesh>(null);
   const { canvas, texture, material } = useMemo(() => {
@@ -73,6 +74,8 @@ export function XRWoundPanel({ active }: { active: boolean }) {
   const s = useMemo(
     () => ({
       placed: false,
+      active: false,
+      held: false,
       drawn: -1,
       flash: 0,
       armed: [true, true],
@@ -82,6 +85,35 @@ export function XRWoundPanel({ active }: { active: boolean }) {
       tip: new THREE.Vector3(),
     }),
     [],
+  );
+
+  s.active = active;
+
+  // Carry it with a fist (as the mat and the opacity slider): it follows, turns to face you, and stays where you let go.
+  useEffect(
+    () =>
+      grab.add({
+        bounds: new THREE.Box3(new THREE.Vector3(-W / 2, -H / 2, -0.03), new THREE.Vector3(W / 2, H / 2, 0.03)),
+        style: 'panel',
+        canGrab: () => s.active && s.placed && !!meshRef.current?.visible,
+        worldMatrix: (out) => {
+          const mesh = meshRef.current!;
+          mesh.updateWorldMatrix(true, false);
+          out.copy(mesh.matrixWorld);
+        },
+        begin: () => {
+          s.held = true;
+        },
+        move: (world) => {
+          const mesh = meshRef.current!;
+          world.decompose(mesh.position, mesh.quaternion, mesh.scale);
+        },
+        end: () => {
+          s.held = false;
+        },
+        setGrabState: (state: GrabState) => material.color.copy(PANEL_GRAB_TINT[state]),
+      }),
+    [grab, material, s],
   );
 
   useEffect(
@@ -116,7 +148,8 @@ export function XRWoundPanel({ active }: { active: boolean }) {
       s.placed = true;
     }
 
-    for (let i = 0; i < 2; i++) {
+    // No presses while it's being carried.
+    for (let i = 0; i < 2 && !s.held; i++) {
       const tip = gl.xr.getHand(i).joints['index-finger-tip'];
       if (!tip?.visible) continue;
       mesh.worldToLocal(tip.getWorldPosition(s.tip));

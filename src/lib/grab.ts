@@ -14,6 +14,13 @@ import { FistDetector, fistRatio } from './fist';
 export type GrabStyle = 'table' | 'panel';
 export type GrabState = 'none' | 'hover' | 'held';
 
+/** A carried panel's tint: normal, with a hand on it, and while it's carried. */
+export const PANEL_GRAB_TINT: Record<GrabState, THREE.Color> = {
+  none: new THREE.Color('#ffffff'),
+  hover: new THREE.Color('#d9f5e4'),
+  held: new THREE.Color('#b5ecca'),
+};
+
 export interface Grabbable {
   /** The part you can touch or point at, in the target's own frame (metres). */
   readonly bounds: THREE.Box3;

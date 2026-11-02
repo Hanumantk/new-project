@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { GrabSystem, type GrabState } from '../lib/grab';
+import { GrabSystem, PANEL_GRAB_TINT, type GrabState } from '../lib/grab';
 import { createHandPose, type HandPose } from '../lib/handPose';
 import { GrabController } from './GrabController';
 import type { Kit } from '../mat/lib/kit';
@@ -67,7 +67,7 @@ export const XRScene = memo(function XRScene({
       <XRPoseSource pose={pose} showHands={isVR} />
       <XRWound strength={woundOpacity} />
       <XRBuddy active={mode !== null} />
-      <XRWoundPanel active={mode !== null} />
+      <XRWoundPanel active={mode !== null} grab={grab} />
       <HintPanel pose={pose} active={mode !== null} />
       <HeadsetSlider value={woundOpacity} active={mode !== null} onChange={onWoundOpacityChange} grab={grab} />
       <StatusReporter pose={pose} onHandStatus={onHandStatus} />
@@ -259,7 +259,7 @@ function HeadsetSlider({
         end: () => {
           scratch.held = false;
         },
-        setGrabState: (state: GrabState) => material.color.copy(GRAB_TINT[state]),
+        setGrabState: (state: GrabState) => material.color.copy(PANEL_GRAB_TINT[state]),
       }),
     [grab, material, scratch],
   );
@@ -330,12 +330,6 @@ function HeadsetSlider({
   );
 }
 
-/** The slider panel's tint: normal, with a hand on it, and while it's carried. */
-const GRAB_TINT: Record<GrabState, THREE.Color> = {
-  none: new THREE.Color('#ffffff'),
-  hover: new THREE.Color('#d9f5e4'),
-  held: new THREE.Color('#b5ecca'),
-};
 
 function drawSlider(canvas: HTMLCanvasElement, value: number) {
   const ctx = canvas.getContext('2d')!;
