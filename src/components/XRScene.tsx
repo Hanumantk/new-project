@@ -7,7 +7,9 @@ import { GrabController } from './GrabController';
 import type { Kit } from '../mat/lib/kit';
 import { MaterialMat } from '../mat/MaterialMat';
 import type { MatSystem } from '../mat/xr/MatSystem';
-import { HEADSET_SLIDER, pokeSliderValue } from '../lib/pokeSlider';
+import { FingerCursor } from '../lib/fingerCursor';
+import { HEADSET_SLIDER, SliderGrip, type SliderGripState } from '../lib/pokeSlider';
+import { uiSound } from '../lib/uiSound';
 import type { HandStatus } from './Hud';
 import { XRPoseSource } from './XRPoseSource';
 import { XRBuddy } from './XRBuddy';
@@ -229,10 +231,14 @@ function HeadsetSlider({
       tip: new THREE.Vector3(),
       active: false,
       held: false,
+      grip: new SliderGrip(),
+      owner: -1,
+      cursor: new FingerCursor(),
     }),
     [],
   );
   scratch.active = active;
+  useEffect(() => () => scratch.cursor.dispose(), [scratch]);
 
   // Carry it with a fist: it follows, turns to face you, and stays where you let go.
   useEffect(
@@ -272,7 +278,7 @@ function HeadsetSlider({
     [texture, material],
   );
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     const mesh = meshRef.current;
     const opacity = value.current;
     if (!mesh || opacity === null) return;
@@ -300,25 +306,43 @@ function HeadsetSlider({
       scratch.placed = true;
     }
 
-    // Either index fingertip pressing the panel sets the value (not while it's carried).
+    // The nearest index fingertip (once grabbed, only that hand's) slides it; not while the panel is carried.
+    let found = false;
+    let fx = 0, fy = 0, fz = Infinity;
     for (let i = 0; i < 2 && !scratch.held; i++) {
+      if (scratch.grip.state === 'held' && scratch.owner !== i) continue;
       const tip = gl.xr.getHand(i).joints['index-finger-tip'];
       if (!tip?.visible) continue;
       mesh.worldToLocal(tip.getWorldPosition(scratch.tip));
-      const next = pokeSliderValue(scratch.tip.x, scratch.tip.y, scratch.tip.z, HEADSET_SLIDER);
-      if (next === null) continue;
-      value.current = next;
-      const percent = Math.round(next * 100);
+      if (Math.abs(scratch.tip.x) > HEADSET_SLIDER.width / 2 + 0.05 || Math.abs(scratch.tip.y) > HEADSET_SLIDER.height / 2 + 0.06) continue;
+      if (Math.abs(scratch.tip.z) >= Math.abs(fz)) continue;
+      found = true;
+      fx = scratch.tip.x;
+      fy = scratch.tip.y;
+      fz = scratch.tip.z;
+      if (scratch.grip.state !== 'held') scratch.owner = i;
+    }
+    const wasHeld = scratch.grip.state === 'held';
+    const holding = scratch.grip.update(found ? fx : null, fy, fz, HEADSET_SLIDER, delta);
+    if (holding && !wasHeld) uiSound.press();
+    if (!holding && wasHeld) uiSound.release();
+    if (holding) {
+      const before = Math.round(value.current * 100);
+      value.current = scratch.grip.value;
+      const percent = Math.round(scratch.grip.value * 100);
+      if (Math.floor(percent / 10) !== Math.floor(before / 10)) uiSound.tick();
       if (percent !== scratch.sent) {
         scratch.sent = percent;
-        onChange(next);
+        onChange(scratch.grip.value);
       }
     }
+    scratch.cursor.update(found ? fx : null, fy, fz, holding);
 
-    const percent = Math.round(value.current * 100);
-    if (percent !== scratch.drawn) {
-      scratch.drawn = percent;
-      drawSlider(canvas, value.current);
+    const state = scratch.grip.state;
+    const key = Math.round(value.current * 100) * 3 + (state === 'held' ? 2 : state === 'hover' ? 1 : 0);
+    if (key !== scratch.drawn) {
+      scratch.drawn = key;
+      drawSlider(canvas, value.current, state);
       texture.needsUpdate = true;
     }
   });
@@ -326,12 +350,14 @@ function HeadsetSlider({
   return (
     <mesh ref={meshRef} material={material} visible={false}>
       <planeGeometry args={[HEADSET_SLIDER.width, HEADSET_SLIDER.height]} />
+      <primitive object={scratch.cursor.mesh} />
     </mesh>
   );
 }
 
 
-function drawSlider(canvas: HTMLCanvasElement, value: number) {
+/** Draws the slider: the track lights up while a fingertip hovers it; the knob grows and fills while it's held. */
+function drawSlider(canvas: HTMLCanvasElement, value: number, state: SliderGripState) {
   const ctx = canvas.getContext('2d')!;
   const { width: w, height: h } = canvas;
   const toPx = (x: number) => (x / HEADSET_SLIDER.width + 0.5) * w;
@@ -352,6 +378,15 @@ function drawSlider(canvas: HTMLCanvasElement, value: number) {
   ctx.fillText('opacity', 44, cy + 24);
 
   ctx.lineCap = 'round';
+  if (state !== 'idle') {
+    // A soft halo along the track: this is what your finger is on.
+    ctx.lineWidth = 56;
+    ctx.strokeStyle = state === 'held' ? 'rgba(47, 158, 99, 0.22)' : 'rgba(47, 158, 99, 0.12)';
+    ctx.beginPath();
+    ctx.moveTo(x0, cy);
+    ctx.lineTo(x1, cy);
+    ctx.stroke();
+  }
   ctx.lineWidth = 16;
   ctx.strokeStyle = '#d6dbd8';
   ctx.beginPath();
@@ -364,15 +399,15 @@ function drawSlider(canvas: HTMLCanvasElement, value: number) {
   ctx.moveTo(x0, cy);
   ctx.lineTo(Math.max(knob, x0 + 0.1), cy);
   ctx.stroke();
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = state === 'held' ? '#2f9e63' : '#ffffff';
   ctx.strokeStyle = '#2f9e63';
   ctx.lineWidth = 8;
   ctx.beginPath();
-  ctx.arc(knob, cy, 30, 0, Math.PI * 2);
+  ctx.arc(knob, cy, state === 'held' ? 40 : state === 'hover' ? 35 : 30, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = '#1f2a24';
+  ctx.fillStyle = state === 'held' ? '#2f9e63' : '#1f2a24';
   ctx.font = '600 46px "DM Sans", system-ui, sans-serif';
   ctx.textAlign = 'right';
   ctx.fillText(`${Math.round(value * 100)}%`, w - 40, cy + 2);

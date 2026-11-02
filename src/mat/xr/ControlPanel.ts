@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { Text } from 'troika-three-text';
-import { pokeSliderValue, type PokeSliderLayout } from '../../lib/pokeSlider';
+import { FingerCursor } from '../../lib/fingerCursor';
+import { SLIDER_CAPTURE, SliderGrip, type PokeSliderLayout } from '../../lib/pokeSlider';
+import { uiSound } from '../../lib/uiSound';
 import type { GrabState } from '../../lib/grab';
 import { PokeButton, POKE_HOVER } from '../lib/poke';
 import type { HandState } from './hands';
@@ -78,6 +80,7 @@ const inverse = new THREE.Matrix4();
 const MINT = new THREE.Color(COLORS.mint);
 const WARN = new THREE.Color(COLORS.warn);
 const WHITE = new THREE.Color('#ffffff');
+const KNOB = new THREE.Color(COLORS.label);
 const INK_TEXT = hex(COLORS.ink);
 /** Backing colour and opacity: normal, with a hand on it, and while it's carried. */
 const BACKING = {
@@ -101,6 +104,8 @@ export class ControlPanel {
   private readonly fill: THREE.Mesh;
   private readonly knob: THREE.Mesh;
   private dragging = false;
+  private readonly grip = new SliderGrip();
+  private readonly cursor = new FingerCursor();
   private opacity = 1;
   private confirmRedraw = 0;
 
@@ -151,6 +156,7 @@ export class ControlPanel {
         dark: false,
       };
     });
+    this.group.add(this.cursor.mesh);
     this.setOpacityDisplay(1);
   }
 
@@ -186,20 +192,29 @@ export class ControlPanel {
       this.confirmRedraw -= dt;
       if (this.confirmRedraw <= 0) this.refreshLabels();
     }
-    const finger = this.nearestFingertip(hands);
+    const finger = this.nearestFingertip(hands, this.grip.state === 'held');
 
-    // Slider: a touch anywhere along its band sets the value.
-    const value = finger ? pokeSliderValue(finger.x, finger.y - SLIDER_Y, finger.z, SLIDER) : null;
-    if (value !== null) {
+    // Slider: a touch on its band grabs it; then only sideways movement counts, until the finger is pulled away.
+    const held = this.grip.update(finger ? finger.x : null, finger ? finger.y - SLIDER_Y : 0, finger?.z ?? 0, SLIDER, dt);
+    if (held) {
+      if (!this.dragging) uiSound.press();
       this.dragging = true;
+      const value = this.grip.value;
       if (Math.abs(value - this.opacity) > 0.002) {
+        if (Math.floor(value * 10) !== Math.floor(this.opacity * 10)) uiSound.tick();
         this.setOpacityDisplay(value);
         this.actions.onOpacity(value, false);
       }
     } else if (this.dragging) {
       this.dragging = false;
+      uiSound.release();
       this.actions.onOpacity(this.opacity, true);
     }
+    // The knob grows while a finger hovers the slider, and grows more and turns mint while it's held.
+    const grow = held ? 1.45 : this.grip.state === 'hover' ? 1.2 : 1;
+    this.knob.scale.setScalar(grow);
+    (this.knob.material as THREE.MeshBasicMaterial).color.copy(held ? MINT : KNOB);
+    let pressing = held;
 
     for (let i = 0; i < this.buttons.length; i++) {
       const b = this.buttons[i];
@@ -208,7 +223,9 @@ export class ControlPanel {
         : b.poke.update(finger ? finger.x : null, finger?.y ?? 0, finger?.z ?? 0, b.enabled);
       b.face.position.z = 0.002 - b.poke.push * 0.004;
       this.paintButton(b);
+      if (b.poke.state === 'pressed') pressing = true;
       if (!pressed) continue;
+      uiSound.press();
       if (b.id === 'redraw' && this.confirmRedraw <= 0) {
         this.confirmRedraw = CONFIRM_TIME;
         this.refreshLabels();
@@ -220,10 +237,14 @@ export class ControlPanel {
       }
       this.actions.onButton(b.id);
     }
+    this.cursor.update(finger ? finger.x : null, finger?.y ?? 0, finger?.z ?? 0, pressing);
   }
 
   /** The fingertip closest to the panel face, in panel space (z = finger surface), if one is near. */
-  private nearestFingertip(hands: readonly HandState[]) {
+  private nearestFingertip(hands: readonly HandState[], holding: boolean) {
+    // Holding the slider, the finger may wander further before it's lost (see SLIDER_CAPTURE).
+    const margin = holding ? SLIDER_CAPTURE.vertical + 0.02 : 0.02;
+    const behind = holding ? SLIDER_CAPTURE.behind : 0.04;
     this.group.updateWorldMatrix(true, false);
     inverse.copy(this.group.matrixWorld).invert();
     let best: { x: number; y: number; z: number } | null = null;
@@ -233,8 +254,8 @@ export class ControlPanel {
       if (!hand.tracked || hand.pinchDistance < 0.03) continue;
       local.copy(hand.indexTip).applyMatrix4(inverse);
       const z = local.z - hand.indexTipRadius;
-      if (Math.abs(local.x) > WIDTH / 2 + 0.02 || Math.abs(local.y) > HEIGHT / 2 + 0.02) continue;
-      if (z > POKE_HOVER + 0.03 || z < -0.04) continue;
+      if (Math.abs(local.x) > WIDTH / 2 + margin || Math.abs(local.y) > HEIGHT / 2 + margin) continue;
+      if (z > POKE_HOVER + 0.03 || z < -behind) continue;
       if (!best || Math.abs(z) < Math.abs(best.z)) best = this.fingerSlot(local.x, local.y, z);
     }
     return best;
